@@ -1,0 +1,25 @@
+# Abhängigkeiten — werden über npm install wiederhergestellt
+node_modules/
+
+# Vite Build-Output — wird bei jedem Build neu generiert
+dist/
+
+# Vite Cache — lokale Optimierungsdaten
+.vite/
+node_modules/.vite/
+
+# Betriebssystem-Dateien
+.DS_Store        # macOS
+Thumbs.db        # Windows
+
+# Editor-Einstellungen 
+.vscode/
+.idea/
+
+# Lokale Umgebungsvariablen 
+.env
+.env.local
+
+# Claude-spezifisch 
+CLAUDE.md
+LERNPLAN.md
