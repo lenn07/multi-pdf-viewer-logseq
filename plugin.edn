@@ -1,0 +1,6 @@
+{:id "multi-pdf-viewer"
+ :name "Multi PDF Viewer"
+ :version "0.0.1"
+ :mode "iframe"
+ :entry "dist/index.html"
+:description "Zeigt mehrere PDFs nebeneinander in Logseq an"}

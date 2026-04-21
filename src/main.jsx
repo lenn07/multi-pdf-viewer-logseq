@@ -1,39 +1,39 @@
-import React, { useState , useEffect} from 'react'
+import React from 'react'
 import { createRoot } from 'react-dom/client'
-// Das ist eine Komponente — eine Funktion die JSX zurückgibt
-// Props werden direkt in den Parametern "destructured"
-function PdfCard({ title, seiten }) {
-    useEffect(() => {
-    // Dieser Code läuft genau einmal, wenn die Komponente erscheint
-    console.log(`PdfCard für "${title}" wurde geladen`)
-  }, []) // Das leere [] bedeutet: nur einmal ausführen
-
-  return (
-    <div style={{ border: '1px solid gray', padding: '10px', margin: '10px' }}>
-      <h2>{title}</h2>
-      <p>Seiten: {seiten}</p>
-    </div>
-  )
-}
+import PdfViewer from './components/PdfViewer'
 
 function App() {
-  // useState gibt uns: [aktueller Wert, Funktion zum Ändern]
-  const [pdfs, setPdfs] = useState(['Dokument A', 'Dokument B'])
-
-  function pdfHinzufügen() {
-    setPdfs([...pdfs, 'Neues Dokument'])
-  }
-
   return (
-    <div>
-      <h1>Meine PDFs ({pdfs.length})</h1>
-      <button onClick={pdfHinzufügen}>PDF hinzufügen</button>
-      {pdfs.map((name, index) => (
-        <PdfCard key={index} title={name} seiten={10} />
-      ))}
+    <div style={{ padding: '16px' }}>
+      <h1>Multi PDF Viewer</h1>
+      {/* Test-PDF aus dem public/ Ordner — Phase 7 ersetzt das durch echte Logseq-Pfade */}
+      <PdfViewer url="/test.pdf" titel="Test Dokument" />
     </div>
   )
 }
 
-const root = createRoot(document.getElementById('app'))
-root.render(<App />)
+// Das ist der Logseq-spezifische Teil:
+// logseq.ready() wartet, bis Logseq vollständig geladen ist
+// Erst dann starten wir React und registrieren Befehle
+async function main() {
+  // Logseq-Befehle nur registrieren wenn wir wirklich in Logseq laufen
+  if (window.__logseq_plugin_id__) {
+    logseq.App.registerCommand(
+      'multi-pdf-viewer:open',
+      { key: 'open-pdf-viewer', label: 'PDF Viewer öffnen', palette: true },
+      async () => logseq.App.showMsg('PDF Viewer wird geöffnet!')
+    )
+  }
+
+  // React in den #app Container rendern
+  const root = createRoot(document.getElementById('app'))
+  root.render(<App />)
+}
+
+// window.__logseq_plugin_id__ existiert nur wenn das Plugin wirklich in Logseq läuft.
+// Im normalen Browser (Dev-Modus) starten wir direkt.
+if (window.__logseq_plugin_id__) {
+  logseq.ready(main).catch(console.error)
+} else {
+  main()
+}

@@ -6,13 +6,19 @@
     "dev": "vite",
     "build": "vite build"
   },
+  "main": "dist/index.html",
   "type": "module",
   "devDependencies": {
     "@vitejs/plugin-react": "^6.0.1",
     "vite": "^8.0.9"
   },
   "dependencies": {
+    "@logseq/libs": "^0.0.17",
+    "pdfjs-dist": "^5.6.205",
     "react": "^19.2.5",
     "react-dom": "^19.2.5"
+  },
+  "logseq": {
+    "id": "_l0rxe1rpu"
   }
 }
