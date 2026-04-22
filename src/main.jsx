@@ -1,15 +1,9 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
-import PdfViewer from './components/PdfViewer'
+import ViewerGrid from './components/ViewerGrid'
 
 function App() {
-  return (
-    <div style={{ padding: '16px' }}>
-      <h1>Multi PDF Viewer</h1>
-      {/* Test-PDF aus dem public/ Ordner — Phase 7 ersetzt das durch echte Logseq-Pfade */}
-      <PdfViewer url="/test.pdf" titel="Test Dokument" />
-    </div>
-  )
+  return <ViewerGrid />
 }
 
 // Das ist der Logseq-spezifische Teil:
