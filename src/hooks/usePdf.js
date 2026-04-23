@@ -16,7 +16,9 @@ async function getPdfjsLib() {
   return pdfjsLib
 }
 
-export function usePdf(url) {
+// scale = 1.0 entspricht der Original-Größe der PDF (72 DPI).
+// Höhere Werte vergrößern (1.5 = 150%), niedrigere verkleinern (0.5 = 50%).
+export function usePdf(url, scale = 1.5) {
   const canvasRef = useRef(null)
   const [pdfDokument, setPdfDokument] = useState(null)
   const [seitenanzahl, setSeitenanzahl] = useState(0)
@@ -75,7 +77,7 @@ export function usePdf(url) {
         return
       }
 
-      const viewport = seite.getViewport({ scale: 1.5 })
+      const viewport = seite.getViewport({ scale })
       canvas.width = viewport.width
       canvas.height = viewport.height
 
@@ -88,7 +90,7 @@ export function usePdf(url) {
     })
 
     return () => { abgebrochen = true }
-  }, [pdfDokument, aktuelleSeite])
+  }, [pdfDokument, aktuelleSeite, scale])
 
   function vorherige() {
     setAktuelleSeite((s) => Math.max(1, s - 1))

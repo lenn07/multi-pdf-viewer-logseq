@@ -5,20 +5,64 @@ import { createRoot } from "react-dom/client";
 import "./app.css";
 import ViewerGrid from "./components/ViewerGrid";
 
+// Aktuelle Breite des Viewers in Prozent der Bildschirmbreite.
+// Grenzen: 20% (fast alles für Logseq) bis 90% (fast alles für PDFs).
+let viewerBreiteProzent = 40;
+const BREITE_MIN = 20;
+const BREITE_MAX = 90;
+const SPEICHER_SCHLUESSEL = "multiPdfViewer.breiteProzent";
+
+// Setzt die Viewer-Breite. Passt drei Dinge gleichzeitig an:
+//   1. die Position/Größe des iframes (`setMainUIInlineStyle`),
+//   2. den rechten Abstand im Logseq-Body (damit Logseq-Inhalt nicht verdeckt wird),
+//   3. localStorage, damit die Breite nach Neustart erhalten bleibt.
+function viewerBreiteSetzen(prozent) {
+  const geklemmt = Math.max(BREITE_MIN, Math.min(BREITE_MAX, prozent));
+  viewerBreiteProzent = geklemmt;
+
+  logseq.setMainUIInlineStyle({
+    zIndex: 11,
+    position: "fixed",
+    top: "0",
+    left: `${100 - geklemmt}vw`,
+    width: `${geklemmt}vw`,
+    height: "100vh",
+  });
+
+  try {
+    const body = window.parent.document.body;
+    if (body.classList.contains("pdf-viewer-open")) {
+      body.style.setProperty("padding-right", `${geklemmt}vw`, "important");
+    }
+  } catch (e) {}
+
+  try {
+    localStorage.setItem(SPEICHER_SCHLUESSEL, String(geklemmt));
+  } catch (e) {}
+}
+
+function viewerBreiteLesen() {
+  return viewerBreiteProzent;
+}
+
 // Logseqs eigenes Layout per CSS anpassen (außerhalb des Plugin-Iframes).
-// Die Klasse 'pdf-viewer-open' auf dem body-Element gibt Logseq einen rechten Abstand
-// von 40vw — sein Inhalt rückt links zusammen und unser Viewer hat Platz.
+// Die Klasse 'pdf-viewer-open' auf dem body-Element gibt Logseq einen rechten Abstand —
+// sein Inhalt rückt links zusammen und unser Viewer hat Platz.
 function viewerOeffnen() {
   logseq.showMainUI();
   try {
-    window.parent.document.body.classList.add("pdf-viewer-open");
+    const body = window.parent.document.body;
+    body.classList.add("pdf-viewer-open");
+    body.style.setProperty("padding-right", `${viewerBreiteProzent}vw`, "important");
   } catch (e) {}
 }
 
 function viewerSchliessen() {
   logseq.hideMainUI();
   try {
-    window.parent.document.body.classList.remove("pdf-viewer-open");
+    const body = window.parent.document.body;
+    body.classList.remove("pdf-viewer-open");
+    body.style.removeProperty("padding-right");
   } catch (e) {}
 }
 
@@ -58,11 +102,18 @@ function main() {
   const root = createRoot(document.getElementById("app"));
   root.render(<ViewerGrid />);
 
-  // CSS in Logseq injizieren: wenn 'pdf-viewer-open' aktiv ist, schiebt Logseq
-  // seinen Inhalt nach links — alle Elemente (Navigation, Toolbar, Seiten) bleiben sichtbar.
+  // Gespeicherte Breite aus dem letzten Besuch wiederherstellen (falls vorhanden).
+  try {
+    const gespeichert = parseFloat(localStorage.getItem(SPEICHER_SCHLUESSEL));
+    if (!isNaN(gespeichert)) {
+      viewerBreiteProzent = Math.max(BREITE_MIN, Math.min(BREITE_MAX, gespeichert));
+    }
+  } catch (e) {}
+
+  // box-sizing injizieren, damit padding-right die Logseq-Breite nicht sprengt.
+  // Den padding-Wert selbst setzen wir jetzt dynamisch in viewerBreiteSetzen().
   logseq.provideStyle(`
     body.pdf-viewer-open {
-      padding-right: 40vw !important;
       box-sizing: border-box !important;
     }
   `);
@@ -71,14 +122,7 @@ function main() {
     openViewer: viewerOeffnen,
   });
 
-  logseq.setMainUIInlineStyle({
-    zIndex: 11,
-    position: "fixed",
-    top: "0",
-    left: "60vw",
-    width: "40vw",
-    height: "100vh",
-  });
+  viewerBreiteSetzen(viewerBreiteProzent);
 
   logseq.useSettingsSchema([
     {
@@ -123,5 +167,5 @@ function main() {
 
 logseq.ready(main).catch(console.error);
 
-// Werden von ViewerGrid.jsx aufgerufen (Schließen-Button bzw. "+ PDF hinzufügen"-Button).
-export { viewerSchliessen, pdfAusBlockOeffnen };
+// Werden von ViewerGrid.jsx aufgerufen (Schließen-Button, "+ PDF hinzufügen"-Button, Resize-Handle).
+export { viewerSchliessen, pdfAusBlockOeffnen, viewerBreiteSetzen, viewerBreiteLesen, BREITE_MIN, BREITE_MAX };
