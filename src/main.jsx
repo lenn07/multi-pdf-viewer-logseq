@@ -1,33 +1,127 @@
-import React from 'react'
-import { createRoot } from 'react-dom/client'
-import ViewerGrid from './components/ViewerGrid'
+import "@logseq/libs";
 
-function App() {
-  return <ViewerGrid />
+import React from "react";
+import { createRoot } from "react-dom/client";
+import "./app.css";
+import ViewerGrid from "./components/ViewerGrid";
+
+// Logseqs eigenes Layout per CSS anpassen (außerhalb des Plugin-Iframes).
+// Die Klasse 'pdf-viewer-open' auf dem body-Element gibt Logseq einen rechten Abstand
+// von 40vw — sein Inhalt rückt links zusammen und unser Viewer hat Platz.
+function viewerOeffnen() {
+  logseq.showMainUI();
+  try {
+    window.parent.document.body.classList.add("pdf-viewer-open");
+  } catch (e) {}
 }
 
-// Das ist der Logseq-spezifische Teil:
-// logseq.ready() wartet, bis Logseq vollständig geladen ist
-// Erst dann starten wir React und registrieren Befehle
-async function main() {
-  // Logseq-Befehle nur registrieren wenn wir wirklich in Logseq laufen
-  if (window.__logseq_plugin_id__) {
-    logseq.App.registerCommand(
-      'multi-pdf-viewer:open',
-      { key: 'open-pdf-viewer', label: 'PDF Viewer öffnen', palette: true },
-      async () => logseq.App.showMsg('PDF Viewer wird geöffnet!')
-    )
+function viewerSchliessen() {
+  logseq.hideMainUI();
+  try {
+    window.parent.document.body.classList.remove("pdf-viewer-open");
+  } catch (e) {}
+}
+
+// Liest den aktuell in Logseq aktiven Block, sucht darin einen PDF-Link
+// (Markdown-Format `[label](pfad.pdf)`), öffnet den Viewer und schickt die
+// PDF-URL per Custom Event an die ViewerGrid-Komponente.
+async function pdfAusBlockOeffnen() {
+  const block = await logseq.Editor.getCurrentBlock();
+  if (!block) {
+    return logseq.App.showMsg("Kein Block ausgewählt.", "error");
   }
 
-  // React in den #app Container rendern
-  const root = createRoot(document.getElementById('app'))
-  root.render(<App />)
+  const treffer = block.content.match(/\[.*?\]\((.*?\.pdf)\)/);
+  if (!treffer) {
+    return logseq.App.showMsg(
+      "Kein PDF-Link im aktuellen Block gefunden.",
+      "warning"
+    );
+  }
+
+  const relativerPfad = treffer[1];
+  const graph = await logseq.App.getCurrentGraph();
+  const bereinigt = relativerPfad.replace(/^\.\.\//, "");
+  const vollerPfad = `${graph.path}/${bereinigt}`;
+  const dateiname = bereinigt.split("/").pop();
+
+  viewerOeffnen();
+
+  window.dispatchEvent(
+    new CustomEvent("pdf-oeffnen", {
+      detail: { url: `file://${vollerPfad}`, titel: dateiname },
+    })
+  );
 }
 
-// window.__logseq_plugin_id__ existiert nur wenn das Plugin wirklich in Logseq läuft.
-// Im normalen Browser (Dev-Modus) starten wir direkt.
-if (window.__logseq_plugin_id__) {
-  logseq.ready(main).catch(console.error)
-} else {
-  main()
+function main() {
+  const root = createRoot(document.getElementById("app"));
+  root.render(<ViewerGrid />);
+
+  // CSS in Logseq injizieren: wenn 'pdf-viewer-open' aktiv ist, schiebt Logseq
+  // seinen Inhalt nach links — alle Elemente (Navigation, Toolbar, Seiten) bleiben sichtbar.
+  logseq.provideStyle(`
+    body.pdf-viewer-open {
+      padding-right: 40vw !important;
+      box-sizing: border-box !important;
+    }
+  `);
+
+  logseq.provideModel({
+    openViewer: viewerOeffnen,
+  });
+
+  logseq.setMainUIInlineStyle({
+    zIndex: 11,
+    position: "fixed",
+    top: "0",
+    left: "60vw",
+    width: "40vw",
+    height: "100vh",
+  });
+
+  logseq.useSettingsSchema([
+    {
+      key: "maxViewer",
+      type: "number",
+      default: 4,
+      title: "Maximale Anzahl PDFs",
+      description: "Wie viele PDFs dürfen gleichzeitig geöffnet sein?",
+    },
+  ]);
+
+  logseq.App.registerUIItem("toolbar", {
+    key: "multi-pdf-viewer-open",
+    template: `<a data-on-click="openViewer" title="PDF Viewer öffnen">
+      <div style="font-size:18px;margin-top:4px;opacity:0.7">📄</div>
+    </a>`,
+  });
+
+  logseq.App.registerCommandPalette(
+    { key: "open-pdf-viewer", label: "PDF Viewer öffnen" },
+    viewerOeffnen
+  );
+
+  logseq.App.registerCommandPalette(
+    { key: "open-pdf-from-block", label: "PDF aus Block im Viewer öffnen" },
+    pdfAusBlockOeffnen
+  );
+
+  function themeAnwenden() {
+    logseq.App.getUserConfigs()
+      .then((configs) => {
+        document.body.classList.toggle(
+          "dark",
+          configs.preferredThemeMode === "dark"
+        );
+      })
+      .catch((e) => console.error("Theme-Erkennung fehlgeschlagen:", e));
+  }
+  themeAnwenden();
+  logseq.App.onThemeChanged(themeAnwenden);
 }
+
+logseq.ready(main).catch(console.error);
+
+// Werden von ViewerGrid.jsx aufgerufen (Schließen-Button bzw. "+ PDF hinzufügen"-Button).
+export { viewerSchliessen, pdfAusBlockOeffnen };

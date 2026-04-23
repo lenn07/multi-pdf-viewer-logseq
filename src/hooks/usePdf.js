@@ -1,9 +1,20 @@
 import { useState, useEffect, useRef } from 'react'
-import * as pdfjsLib from 'pdfjs-dist'
 
-// ?url weist Vite an, den Worker als fertige URL zu liefern (kein Bundling).
-import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
-pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
+// Legacy-Build: kompatibel mit älterem Chromium in Logseqs Electron.
+// Vermeidet den Fehler "getOrInsertComputed is not a function".
+import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
+
+// pdfjsLib wird NICHT beim Start geladen (kein statischer import).
+// Stattdessen laden wir es nur wenn wirklich eine PDF gerendert werden soll.
+// Das hält den initialen Bundle klein und logseq.ready() wird sofort aufgerufen.
+let pdfjsLib = null
+async function getPdfjsLib() {
+  if (!pdfjsLib) {
+    pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs')
+    pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
+  }
+  return pdfjsLib
+}
 
 export function usePdf(url) {
   const canvasRef = useRef(null)
@@ -21,23 +32,30 @@ export function usePdf(url) {
     setPdfDokument(null)
     setAktuelleSeite(1)
 
-    const ladeAufgabe = pdfjsLib.getDocument(url)
+    let ladeAufgabe = null
+    let abgebrochen = false
 
-    ladeAufgabe.promise
-      .then((doc) => {
-        setPdfDokument(doc)
-        setSeitenanzahl(doc.numPages)
+    // getPdfjsLib() lädt PDF.js beim ersten Aufruf, danach gibt es den Cache zurück
+    getPdfjsLib().then((lib) => {
+      if (abgebrochen) return
+      ladeAufgabe = lib.getDocument(url)
+      return ladeAufgabe.promise
+    }).then((doc) => {
+      if (abgebrochen) return
+      setPdfDokument(doc)
+      setSeitenanzahl(doc.numPages)
+      setLaden(false)
+    }).catch((err) => {
+      if (!abgebrochen && err.name !== 'AbortException') {
+        setFehler('PDF konnte nicht geladen werden: ' + err.message)
         setLaden(false)
-      })
-      .catch((err) => {
-        if (err.name !== 'AbortException') {
-          setFehler('PDF konnte nicht geladen werden: ' + err.message)
-          setLaden(false)
-        }
-      })
+      }
+    })
 
-    // Wenn die URL wechselt bevor die PDF fertig geladen ist: alten Ladevorgang abbrechen
-    return () => ladeAufgabe.destroy()
+    return () => {
+      abgebrochen = true
+      ladeAufgabe?.destroy()
+    }
   }, [url])
 
   useEffect(() => {
@@ -50,12 +68,23 @@ export function usePdf(url) {
 
       const canvas = canvasRef.current
       const ctx = canvas.getContext('2d')
-      const viewport = seite.getViewport({ scale: 1.5 })
 
+      // ctx kann null sein wenn der Browser Canvas-Rendering blockiert
+      if (!ctx) {
+        setFehler('Canvas-Kontext nicht verfügbar.')
+        return
+      }
+
+      const viewport = seite.getViewport({ scale: 1.5 })
       canvas.width = viewport.width
       canvas.height = viewport.height
 
       return seite.render({ canvasContext: ctx, viewport }).promise
+    }).catch((err) => {
+      if (!abgebrochen) {
+        console.error('PDF Render Fehler:', err)
+        setFehler('Seite konnte nicht gerendert werden: ' + err.message)
+      }
     })
 
     return () => { abgebrochen = true }

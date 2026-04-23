@@ -1,8 +1,6 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import PdfViewer from './PdfViewer'
-
-// Eine echte Test-PDF von Mozilla — funktioniert ohne lokale Datei
-const DEMO_PDF = 'https://mozilla.github.io/pdf.js/web/compressed.tracemonkey-pldi-09.pdf'
+import { viewerSchliessen, pdfAusBlockOeffnen } from '../main'
 
 const stile = {
   wrapper: {
@@ -50,41 +48,75 @@ const stile = {
     background: 'transparent',
     color: 'var(--ls-primary-text-color, #333)',
   },
+  viewerSchliessenBtn: {
+    marginLeft: 'auto',
+    padding: '2px 10px',
+    cursor: 'pointer',
+  },
+  leererZustand: {
+    padding: '32px',
+    textAlign: 'center',
+    color: 'var(--ls-secondary-text-color, #888)',
+  },
 }
 
 function ViewerGrid() {
-  // pdfListe ist ein Array von Objekten: [{ id, url, titel }, { id, url, titel }, ...]
-  // useState mit einem Demo-Eintrag, damit sofort etwas zu sehen ist
-  const [pdfListe, setPdfListe] = useState([
-    { id: 1, url: DEMO_PDF, titel: 'Demo PDF' },
-  ])
+  const [pdfListe, setPdfListe] = useState([])
 
-  // PDF hinzufügen: Nutzer gibt eine URL ein, wir hängen ein neues Objekt ans Array
-  function pdfHinzufuegen() {
-    const url = window.prompt('PDF-URL eingeben:')
-    if (!url) return // Nutzer hat abgebrochen
+  // useEffect mit leerem Array [] läuft einmal beim ersten Rendern der Komponente.
+  // Wir registrieren einen Listener für das 'pdf-oeffnen' Custom Event aus main.jsx.
+  // Das ist wie ein Briefkasten: main.jsx wirft einen Brief ein, wir lesen ihn hier.
+  useEffect(() => {
+    function pdfEmpfangen(event) {
+      const { url, titel } = event.detail
 
-    const neueId = Date.now() // aktuelle Uhrzeit als eindeutige Zahl, z.B. 1713789123456
-    const neuerEintrag = { id: neueId, url, titel: 'PDF ' + (pdfListe.length + 1) }
+      // Maximale Anzahl aus den Logseq-Einstellungen lesen (Fallback: 4)
+      const max = logseq?.settings?.maxViewer ?? 4
 
-    // ...pdfListe kopiert alle bestehenden Einträge, dann hängen wir den neuen dran
-    setPdfListe([...pdfListe, neuerEintrag])
-  }
+      setPdfListe((aktuelleliste) => {
+        if (aktuelleliste.length >= max) {
+          // Wir ersetzen die älteste PDF (die erste in der Liste)
+          const [, ...rest] = aktuelleliste
+          return [...rest, { id: Date.now(), url, titel }]
+        }
+        return [...aktuelleliste, { id: Date.now(), url, titel }]
+      })
+    }
 
-  // PDF entfernen: alle außer der mit der gesuchten id behalten
+    window.addEventListener('pdf-oeffnen', pdfEmpfangen)
+
+    // Cleanup: wenn die Komponente verschwindet, Listener wieder entfernen
+    return () => window.removeEventListener('pdf-oeffnen', pdfEmpfangen)
+  }, [])
+
   function pdfEntfernen(id) {
-    setPdfListe(pdfListe.filter((pdf) => pdf.id !== id))
+    setPdfListe((alt) => alt.filter((pdf) => pdf.id !== id))
   }
 
   return (
     <div style={stile.wrapper}>
-      {/* Toolbar oben: Button + Anzahl */}
+      {/* Toolbar oben: Button + Anzahl + Schließen */}
       <div style={stile.toolbar}>
-        <button onClick={pdfHinzufuegen}>+ PDF hinzufügen</button>
+        <button onClick={pdfAusBlockOeffnen}>+ PDF hinzufügen</button>
         <span style={stile.anzahl}>
           {pdfListe.length} PDF(s) offen
         </span>
+        <button
+          onClick={viewerSchliessen}
+          style={stile.viewerSchliessenBtn}
+          title="Viewer schließen"
+        >
+          ✕
+        </button>
       </div>
+
+      {/* Leerer Zustand: Hinweis wenn noch keine PDFs offen sind */}
+      {pdfListe.length === 0 && (
+        <div style={stile.leererZustand}>
+          Keine PDFs offen. Wähle in Logseq einen Block mit PDF-Link aus<br />
+          und klicke dann auf „+ PDF hinzufügen".
+        </div>
+      )}
 
       {/* Das Raster: für jede PDF in der Liste einen PdfViewer rendern */}
       <div style={stile.grid}>
