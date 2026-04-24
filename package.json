@@ -1,7 +1,24 @@
 {
-  "name": "logseqplugin",
+  "name": "multi-pdf-viewer-logseq",
   "version": "1.0.0",
-  "description": "Logseq Plugin: Mehrere PDFs gleichzeitig anzeigen",
+  "description": "Logseq Plugin: Mehrere PDFs gleichzeitig nebeneinander anzeigen",
+  "author": "lenn07",
+  "license": "MIT",
+  "homepage": "https://github.com/lenn07/multi-pdf-viewer-logseq",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lenn07/multi-pdf-viewer-logseq.git"
+  },
+  "bugs": {
+    "url": "https://github.com/lenn07/multi-pdf-viewer-logseq/issues"
+  },
+  "keywords": [
+    "logseq",
+    "logseq-plugin",
+    "pdf",
+    "pdf-viewer",
+    "multi-pdf"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "vite build"
@@ -19,6 +36,7 @@
     "react-dom": "^19.2.5"
   },
   "logseq": {
-    "id": "_l0rxe1rpu"
+    "id": "_l0rxe1rpu",
+    "icon": "./public/icon.png"
   }
 }
