@@ -64,6 +64,7 @@ export function usePdf(url, scale = 1.5) {
     if (!pdfDokument || !canvasRef.current) return
 
     let abgebrochen = false
+    let renderTask = null
 
     pdfDokument.getPage(aktuelleSeite).then((seite) => {
       if (abgebrochen || !canvasRef.current) return
@@ -81,15 +82,22 @@ export function usePdf(url, scale = 1.5) {
       canvas.width = viewport.width
       canvas.height = viewport.height
 
-      return seite.render({ canvasContext: ctx, viewport }).promise
+      renderTask = seite.render({ canvasContext: ctx, viewport })
+      return renderTask.promise
     }).catch((err) => {
-      if (!abgebrochen) {
+      // RenderingCancelledException: wir haben beim Seitenwechsel selbst abgebrochen — ignorieren.
+      if (!abgebrochen && err.name !== 'RenderingCancelledException') {
         console.error('PDF Render Fehler:', err)
         setFehler('Seite konnte nicht gerendert werden: ' + err.message)
       }
     })
 
-    return () => { abgebrochen = true }
+    return () => {
+      abgebrochen = true
+      // Laufenden Render stoppen — sonst "Cannot use the same canvas during multiple render() operations"
+      // bei schnellem Seitenwechsel.
+      renderTask?.cancel()
+    }
   }, [pdfDokument, aktuelleSeite, scale])
 
   function vorherige() {

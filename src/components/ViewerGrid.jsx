@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect } from 'react'
 import PdfViewer from './PdfViewer'
 import {
   viewerSchliessen,
@@ -19,6 +19,10 @@ const stile = {
     backgroundColor: 'var(--ls-primary-background-color, #fff)',
     boxSizing: 'border-box',
     position: 'relative',
+    // Immer sichtbare Trennlinie zu Logseq. rgba-Schwarz, damit sie
+    // sowohl auf hellen als auch auf dunklen Themes als dunkler Strich
+    // lesbar ist (wird dunkler als jeder Theme-Hintergrund).
+    borderLeft: '2px solid rgba(0, 0, 0, 0.45)',
   },
   resizeHandle: {
     position: 'absolute',

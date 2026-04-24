@@ -1,5 +1,7 @@
 /* Fallback-Farben für den Dev-Modus (normaler Browser ohne Logseq).
-   In Logseq selbst werden diese Variablen von Logseq gesetzt. */
+   In Logseq selbst werden die Variablen zur Laufzeit von main.jsx
+   inline auf <body> gesetzt (farbenVonLogseqUebernehmen) und überschreiben
+   diese Defaults. Inline-Styles auf body gewinnen gegen Klassen-Regeln. */
 :root {
   --ls-primary-background-color: #ffffff;
   --ls-secondary-background-color: #f7f7f7;
@@ -8,7 +10,9 @@
   --ls-border-color: #e0e0e0;
 }
 
-/* Wenn body die Klasse "dark" hat, gelten diese Farben stattdessen */
+/* Dev-Mode Dark-Fallback — nur relevant, wenn kein Logseq da ist und
+   die Variablen nicht inline gesetzt wurden. Spezifität bleibt bei
+   body.dark (0,0,1,1) — Inline auf body schlägt das. */
 body.dark {
   --ls-primary-background-color: #1e2030;
   --ls-secondary-background-color: #252738;
@@ -24,4 +28,34 @@ body.dark {
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+/* Native Form-Elemente erben Farbe und Schrift NICHT automatisch —
+   sie haben eigene Browser-Defaults (z.B. schwarze Button-Schrift,
+   hellgrauer Button-Hintergrund). Hier geben wir ihnen Theme-konforme
+   Defaults, die inline-Styles in Komponenten weiterhin überschreiben. */
+button,
+input,
+textarea,
+select {
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+button {
+  background-color: transparent;
+  border: 1px solid var(--ls-border-color, #ccc);
+  border-radius: 3px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  background-color: var(--ls-secondary-background-color, #f0f0f0);
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }

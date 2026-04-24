@@ -85,6 +85,9 @@ async function pdfAusBlockOeffnen() {
 
   const relativerPfad = treffer[1];
   const graph = await logseq.App.getCurrentGraph();
+  if (!graph) {
+    return logseq.App.showMsg("Kein Graph offen.", "error");
+  }
   const bereinigt = relativerPfad.replace(/^\.\.\//, "");
   const vollerPfad = `${graph.path}/${bereinigt}`;
   const dateiname = bereinigt.split("/").pop();
@@ -151,18 +154,148 @@ function main() {
     pdfAusBlockOeffnen
   );
 
+  // Die CSS-Variablen, die unsere Komponenten nutzen. Werden aus Logseqs
+  // Haupt-Dokument kopiert, damit wir exakt dessen Theme-Farben übernehmen
+  // (auch bei Custom-Themes, nicht nur Dark/Light).
+  const FARB_VARIABLEN = [
+    "--ls-primary-background-color",
+    "--ls-secondary-background-color",
+    "--ls-primary-text-color",
+    "--ls-secondary-text-color",
+    "--ls-border-color",
+  ];
+
+  // Log ins Logseq-Hauptfenster (statt ins iframe), damit die Nachricht
+  // in derselben Console auftaucht, die der Nutzer ohnehin offen hat.
+  function parentLog(...args) {
+    try {
+      window.parent.console.log("[MultiPdfViewer]", ...args);
+    } catch (e) {
+      console.log("[MultiPdfViewer]", ...args);
+    }
+  }
+
+  function farbenVonLogseqUebernehmen() {
+    try {
+      const parentWin = window.parent;
+      const parentDoc = parentWin.document;
+      // WICHTIG: Wir schreiben auf unser iframe-<body> (nicht <html>).
+      // Grund: Das app.css hat `body.dark { --ls-*: ... }` — eine Klassen-
+      // Regel auf body. Inline-Style auf body schlägt Klassen-Regel auf
+      // demselben Element (höhere Spezifität). Auf html gesetzt würde die
+      // body-Regel für alle Kinder des bodys gewinnen.
+      const eigenesBody = document.body;
+
+      // Haupt-Quelle: tatsächliche Body-Farbe + Schrift von Logseq.
+      const bodyStil = parentWin.getComputedStyle(parentDoc.body);
+      let bg = bodyStil.backgroundColor;
+      const fg = bodyStil.color;
+      const schriftart = bodyStil.fontFamily;
+
+      // Falls body-Hintergrund transparent ist, von html lesen.
+      if (!bg || bg === "rgba(0, 0, 0, 0)" || bg === "transparent") {
+        bg = parentWin.getComputedStyle(parentDoc.documentElement)
+          .backgroundColor;
+      }
+
+      eigenesBody.style.setProperty("--ls-primary-background-color", bg);
+      eigenesBody.style.setProperty("--ls-primary-text-color", fg);
+      // Direkt am body setzen, damit alles, was per `inherit` arbeitet
+      // (color, font-family), automatisch die Logseq-Werte nutzt.
+      eigenesBody.style.backgroundColor = bg;
+      eigenesBody.style.color = fg;
+      eigenesBody.style.fontFamily = schriftart;
+
+      // Zusätzlich: die --ls-* Variablen vom Parent holen (falls gesetzt).
+      // Gibt uns secondary/border-Farben, die wir aus bg/fg nicht ableiten
+      // könnten.
+      const quellen = [parentDoc.documentElement, parentDoc.body];
+      const zusaetzlich = {};
+      for (const variable of FARB_VARIABLEN) {
+        for (const quelle of quellen) {
+          const wert = parentWin
+            .getComputedStyle(quelle)
+            .getPropertyValue(variable)
+            .trim();
+          if (wert) {
+            eigenesBody.style.setProperty(variable, wert);
+            zusaetzlich[variable] = wert;
+            break;
+          }
+        }
+      }
+
+      parentLog("Theme übernommen:", {
+        "body.backgroundColor": bg,
+        "body.color": fg,
+        "body.fontFamily": schriftart,
+        "zusätzliche --ls-* Variablen": zusaetzlich,
+      });
+    } catch (e) {
+      parentLog("Fehler beim Farben-Lesen:", e && e.message);
+    }
+  }
+
+  // Liest direkt an Logseqs <html> / <body>, ob Dark Mode aktiv ist.
+  // Robuster als `preferredThemeMode`, weil das nur die Einstellung
+  // ("auto", "dark", "light") zeigt, nicht den tatsächlich aktiven Modus.
+  function istLogseqDunkel() {
+    try {
+      const parentDoc = window.parent.document;
+      for (const el of [parentDoc.documentElement, parentDoc.body]) {
+        if (
+          el.classList.contains("dark") ||
+          el.classList.contains("theme-dark")
+        )
+          return true;
+        if (
+          el.classList.contains("light") ||
+          el.classList.contains("theme-light")
+        )
+          return false;
+        const attr = el.getAttribute("data-theme");
+        if (attr === "dark") return true;
+        if (attr === "light") return false;
+      }
+      // Letzter Fallback: Hintergrundhelligkeit vom Logseq-Body prüfen.
+      const bg = window.parent.getComputedStyle(parentDoc.body).backgroundColor;
+      const zahlen = bg.match(/\d+/g);
+      if (!zahlen) return false;
+      const [r, g, b] = zahlen.map(Number);
+      const luminanz = (r * 0.299 + g * 0.587 + b * 0.114) / 255;
+      return luminanz < 0.5;
+    } catch (e) {
+      return false;
+    }
+  }
+
   function themeAnwenden() {
-    logseq.App.getUserConfigs()
-      .then((configs) => {
-        document.body.classList.toggle(
-          "dark",
-          configs.preferredThemeMode === "dark"
-        );
-      })
-      .catch((e) => console.error("Theme-Erkennung fehlgeschlagen:", e));
+    const dunkel = istLogseqDunkel();
+    parentLog("themeAnwenden läuft. istLogseqDunkel =", dunkel);
+    // 1. Dark-Klasse an unserem iframe-Body setzen — wirkt als Fallback,
+    //    falls das Kopieren der Farbvariablen fehlschlägt.
+    document.body.classList.toggle("dark", dunkel);
+    // 2. Echte Farbwerte aus Logseq übernehmen (überschreibt die Fallbacks).
+    farbenVonLogseqUebernehmen();
   }
   themeAnwenden();
   logseq.App.onThemeChanged(themeAnwenden);
+
+  // Zusätzlich: Logseqs html/body direkt beobachten. Die onThemeChanged-API
+  // feuert nicht bei allen Änderungen (z.B. beim Wechsel in den Einstellungen).
+  // Ein MutationObserver fängt class- und style-Änderungen zuverlässig ab.
+  try {
+    const parentDoc = window.parent.document;
+    const beobachter = new MutationObserver(() => themeAnwenden());
+    const optionen = {
+      attributes: true,
+      attributeFilter: ["class", "style", "data-theme"],
+    };
+    beobachter.observe(parentDoc.documentElement, optionen);
+    beobachter.observe(parentDoc.body, optionen);
+  } catch (e) {
+    parentLog("MutationObserver konnte nicht installiert werden:", e && e.message);
+  }
 }
 
 logseq.ready(main).catch(console.error);
