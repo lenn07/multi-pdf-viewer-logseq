@@ -1,6 +1,6 @@
 {
   "name": "multi-pdf-viewer-logseq",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Logseq Plugin: Mehrere PDFs gleichzeitig nebeneinander anzeigen",
   "author": "lenn07",
   "license": "MIT",

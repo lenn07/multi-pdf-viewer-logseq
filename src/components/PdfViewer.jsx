@@ -1,5 +1,6 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { usePdf } from '../hooks/usePdf'
+import PdfPage from './PdfPage'
 
 const stile = {
   container: {
@@ -45,12 +46,12 @@ const stile = {
     lineHeight: 1,
     flexShrink: 0,
   },
-  canvasWrapper: {
+  scrollBereich: {
     overflow: 'auto',
-    padding: '0',
+    padding: '8px 0',
     flex: 1,
-    display: 'block',
     minHeight: 0,
+    backgroundColor: 'var(--ls-tertiary-background-color, #ececec)',
   },
   navigation: {
     display: 'flex',
@@ -75,57 +76,89 @@ const stile = {
 const ZOOM_STUFEN = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0]
 const ZOOM_DEFAULT = 1.0
 
-// PDF.js rendert immer mit dieser Scale (feste Canvas-Auflösung für gute Bildqualität).
-// Die tatsächliche Darstellungsgröße wird anschließend per CSS skaliert.
-const RENDER_SCALE = 1.5
-
 function PdfViewer({ url, titel, onClose }) {
   const [zoom, setZoom] = useState(ZOOM_DEFAULT)
+  const [aktuelleSeite, setAktuelleSeite] = useState(1)
+  const [kachelBreite, setKachelBreite] = useState(0)
+  // Callback-Ref: hält das DOM-Element des Scrollers als State.
+  // Vorteil gegenüber useRef: Effects + Kinder sehen das Element im selben Render-Schritt,
+  // ohne extra "container-bereit"-Flag.
+  const [scroller, setScroller] = useState(null)
+  const setScrollerRef = useCallback((el) => setScroller(el), [])
 
-  const { canvasRef, seitenanzahl, aktuelleSeite, vorherige, naechste, laden, fehler } =
-    usePdf(url, RENDER_SCALE)
+  const { pdfDokument, seitenanzahl, defaultViewport, laden, fehler } = usePdf(url)
 
-  const wrapperRef = useRef(null)
-
-  // CSS-Skalierung: Canvas wird auf (Kachelbreite × zoom) gestreckt.
-  // Höhe wächst proportional mit — überschüssige Höhe wird vom Wrapper vertikal gescrollt.
-  // ResizeObserver reagiert auf Größenänderung der Kachel (z.B. Viewer resize).
+  // Container-Breite messen: Basis für die Anzeige-Breite der Seiten (× Zoom).
+  // ResizeObserver reagiert auf Größenänderungen der Kachel (z.B. Layout-Resize).
   useEffect(() => {
-    const wrapper = wrapperRef.current
-    const canvas = canvasRef.current
-    if (!wrapper || !canvas) return
+    if (!scroller) return
+    function messen() {
+      // clientWidth zieht eine evtl. vertikale Scrollbar bereits ab.
+      setKachelBreite(scroller.clientWidth)
+    }
+    messen()
+    const obs = new ResizeObserver(messen)
+    obs.observe(scroller)
+    return () => obs.disconnect()
+  }, [scroller])
 
-    function anpassen() {
-      if (!canvas.width) return
-      const kachelBreite = wrapper.clientWidth
-      if (kachelBreite <= 0) return
+  // Scroll-Position → "aktuelle Seite". rAF-Throttle hält den Handler bei einer Frame-Rate
+  // statt bei jedem Scroll-Tick (60–120 Hz Browser-Events). offsetTop wächst monoton, also
+  // brechen wir die Iteration ab sobald wir die Referenzhöhe überschritten haben.
+  useEffect(() => {
+    if (!scroller || !pdfDokument) return
 
-      const zielBreite = kachelBreite * zoom
-      const faktor = zielBreite / canvas.width
-      canvas.style.width = zielBreite + 'px'
-      canvas.style.height = canvas.height * faktor + 'px'
+    let queued = false
+
+    function aktualisieren() {
+      const seitenElemente = scroller.querySelectorAll('[data-seite]')
+      if (seitenElemente.length === 0) return
+      const referenz = scroller.scrollTop + scroller.clientHeight / 3
+      let beste = 1
+      for (const seitenEl of seitenElemente) {
+        if (seitenEl.offsetTop > referenz) break
+        beste = parseInt(seitenEl.dataset.seite, 10)
+      }
+      setAktuelleSeite(beste)
     }
 
-    anpassen()
-    const beobachter = new ResizeObserver(anpassen)
-    beobachter.observe(wrapper)
-
-    // Wenn PDF.js neu rendert (Seitenwechsel): canvas.width/height ändert sich
-    const mutationBeobachter = new MutationObserver(anpassen)
-    mutationBeobachter.observe(canvas, { attributes: true, attributeFilter: ['width', 'height'] })
-
-    return () => {
-      beobachter.disconnect()
-      mutationBeobachter.disconnect()
+    function onScroll() {
+      if (queued) return
+      queued = true
+      requestAnimationFrame(() => {
+        queued = false
+        aktualisieren()
+      })
     }
-  }, [zoom, canvasRef])
+
+    aktualisieren()
+    scroller.addEventListener('scroll', onScroll, { passive: true })
+    return () => scroller.removeEventListener('scroll', onScroll)
+  }, [scroller, pdfDokument, kachelBreite, zoom])
+
+  // Scrollt den Container so, dass der Anfang der Zielseite oben sichtbar ist.
+  function zuSeite(n) {
+    if (!scroller) return
+    const ziel = scroller.querySelector(`[data-seite="${n}"]`)
+    if (ziel) {
+      scroller.scrollTo({ top: ziel.offsetTop - 8, behavior: 'smooth' })
+    }
+  }
+
+  function vorherige() {
+    zuSeite(Math.max(1, aktuelleSeite - 1))
+  }
+
+  function naechste() {
+    zuSeite(Math.min(seitenanzahl, aktuelleSeite + 1))
+  }
 
   function zoomErhoehen() {
     setZoom((aktuell) => ZOOM_STUFEN.find((s) => s > aktuell) ?? aktuell)
   }
 
   function zoomVerringern() {
-    setZoom((aktuell) => [...ZOOM_STUFEN].reverse().find((s) => s < aktuell) ?? aktuell)
+    setZoom((aktuell) => ZOOM_STUFEN.findLast((s) => s < aktuell) ?? aktuell)
   }
 
   if (laden) {
@@ -135,6 +168,10 @@ function PdfViewer({ url, titel, onClose }) {
   if (fehler) {
     return <div style={{ ...stile.container, color: 'red', padding: '8px', fontSize: '12px' }}>{fehler}</div>
   }
+
+  // zielBreite = Kachelbreite × Zoom. Bei zoom > 1 wird die Seite breiter als die Kachel
+  // → horizontaler Scroll. Bei zoom < 1 ist sie schmaler und wird durch margin: 0 auto zentriert.
+  const zielBreite = Math.max(0, kachelBreite * zoom)
 
   return (
     <div style={stile.container}>
@@ -154,8 +191,18 @@ function PdfViewer({ url, titel, onClose }) {
         )}
       </div>
 
-      <div ref={wrapperRef} style={stile.canvasWrapper}>
-        <canvas ref={canvasRef} style={{ display: 'block' }} />
+      <div ref={setScrollerRef} style={stile.scrollBereich}>
+        {pdfDokument && scroller && zielBreite > 0 &&
+          Array.from({ length: seitenanzahl }, (_, i) => (
+            <PdfPage
+              key={i + 1}
+              pdfDokument={pdfDokument}
+              seitennummer={i + 1}
+              zielBreite={zielBreite}
+              defaultViewport={defaultViewport}
+              scrollContainer={scroller}
+            />
+          ))}
       </div>
 
       <div style={stile.navigation}>

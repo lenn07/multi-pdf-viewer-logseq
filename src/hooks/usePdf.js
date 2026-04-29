@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 
 // Legacy-Build: kompatibel mit älterem Chromium in Logseqs Electron.
 // Vermeidet den Fehler "getOrInsertComputed is not a function".
@@ -16,13 +16,19 @@ async function getPdfjsLib() {
   return pdfjsLib
 }
 
-// scale = 1.0 entspricht der Original-Größe der PDF (72 DPI).
-// Höhere Werte vergrößern (1.5 = 150%), niedrigere verkleinern (0.5 = 50%).
-export function usePdf(url, scale = 1.5) {
-  const canvasRef = useRef(null)
+// Lädt das PDF-Dokument und liefert es zusammen mit der Größe der ersten Seite zurück.
+// Das eigentliche Rendern der einzelnen Seiten passiert in PdfPage.jsx — pro Seite ein Canvas.
+//
+// Rückgabe:
+//   - pdfDokument: das geladene PDF.js-Document (oder null)
+//   - seitenanzahl: Anzahl Seiten
+//   - defaultViewport: { width, height } der ersten Seite bei scale=1 — für Platzhalter-Höhen
+//   - laden: true während das PDF geladen wird
+//   - fehler: Fehlermeldung oder null
+export function usePdf(url) {
   const [pdfDokument, setPdfDokument] = useState(null)
   const [seitenanzahl, setSeitenanzahl] = useState(0)
-  const [aktuelleSeite, setAktuelleSeite] = useState(1)
+  const [defaultViewport, setDefaultViewport] = useState(null)
   const [laden, setLaden] = useState(false)
   const [fehler, setFehler] = useState(null)
 
@@ -32,27 +38,35 @@ export function usePdf(url, scale = 1.5) {
     setLaden(true)
     setFehler(null)
     setPdfDokument(null)
-    setAktuelleSeite(1)
+    setDefaultViewport(null)
+    setSeitenanzahl(0)
 
     let ladeAufgabe = null
     let abgebrochen = false
 
-    // getPdfjsLib() lädt PDF.js beim ersten Aufruf, danach gibt es den Cache zurück
-    getPdfjsLib().then((lib) => {
-      if (abgebrochen) return
-      ladeAufgabe = lib.getDocument(url)
-      return ladeAufgabe.promise
-    }).then((doc) => {
-      if (abgebrochen) return
-      setPdfDokument(doc)
-      setSeitenanzahl(doc.numPages)
-      setLaden(false)
-    }).catch((err) => {
-      if (!abgebrochen && err.name !== 'AbortException') {
-        setFehler('PDF konnte nicht geladen werden: ' + err.message)
+    getPdfjsLib()
+      .then((lib) => {
+        if (abgebrochen) return
+        ladeAufgabe = lib.getDocument(url)
+        return ladeAufgabe.promise
+      })
+      .then(async (doc) => {
+        if (abgebrochen || !doc) return
+        // Erste Seite holen, damit wir die Default-Größe (für Platzhalter) kennen.
+        const seite1 = await doc.getPage(1)
+        if (abgebrochen) return
+        const vp = seite1.getViewport({ scale: 1 })
+        setDefaultViewport({ width: vp.width, height: vp.height })
+        setSeitenanzahl(doc.numPages)
+        setPdfDokument(doc)
         setLaden(false)
-      }
-    })
+      })
+      .catch((err) => {
+        if (!abgebrochen && err.name !== 'AbortException') {
+          setFehler('PDF konnte nicht geladen werden: ' + err.message)
+          setLaden(false)
+        }
+      })
 
     return () => {
       abgebrochen = true
@@ -60,53 +74,5 @@ export function usePdf(url, scale = 1.5) {
     }
   }, [url])
 
-  useEffect(() => {
-    if (!pdfDokument || !canvasRef.current) return
-
-    let abgebrochen = false
-    let renderTask = null
-
-    pdfDokument.getPage(aktuelleSeite).then((seite) => {
-      if (abgebrochen || !canvasRef.current) return
-
-      const canvas = canvasRef.current
-      const ctx = canvas.getContext('2d')
-
-      // ctx kann null sein wenn der Browser Canvas-Rendering blockiert
-      if (!ctx) {
-        setFehler('Canvas-Kontext nicht verfügbar.')
-        return
-      }
-
-      const viewport = seite.getViewport({ scale })
-      canvas.width = viewport.width
-      canvas.height = viewport.height
-
-      renderTask = seite.render({ canvasContext: ctx, viewport })
-      return renderTask.promise
-    }).catch((err) => {
-      // RenderingCancelledException: wir haben beim Seitenwechsel selbst abgebrochen — ignorieren.
-      if (!abgebrochen && err.name !== 'RenderingCancelledException') {
-        console.error('PDF Render Fehler:', err)
-        setFehler('Seite konnte nicht gerendert werden: ' + err.message)
-      }
-    })
-
-    return () => {
-      abgebrochen = true
-      // Laufenden Render stoppen — sonst "Cannot use the same canvas during multiple render() operations"
-      // bei schnellem Seitenwechsel.
-      renderTask?.cancel()
-    }
-  }, [pdfDokument, aktuelleSeite, scale])
-
-  function vorherige() {
-    setAktuelleSeite((s) => Math.max(1, s - 1))
-  }
-
-  function naechste() {
-    setAktuelleSeite((s) => Math.min(seitenanzahl, s + 1))
-  }
-
-  return { canvasRef, seitenanzahl, aktuelleSeite, vorherige, naechste, laden, fehler }
+  return { pdfDokument, seitenanzahl, defaultViewport, laden, fehler }
 }
