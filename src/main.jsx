@@ -66,9 +66,39 @@ function viewerSchliessen() {
   } catch (e) {}
 }
 
+// Öffnet den Viewer und schickt eine PDF-URL per Custom Event an ViewerGrid.
+// Nimmt entweder einen relativen Pfad (z.B. "../assets/datei.pdf") oder eine
+// fertige `file://`-URL — die Block- und die Click-Quelle liefern Unterschiedliches.
+async function pdfAusRelativemPfadOeffnen(pfad) {
+  let url;
+  let dateiname;
+
+  if (/^file:\/\//i.test(pfad)) {
+    // Schon eine absolute file://-URL — direkt nehmen.
+    url = pfad;
+    const ohneQuery = pfad.split("?")[0].split("#")[0];
+    dateiname = decodeURIComponent(ohneQuery.split("/").pop());
+  } else {
+    const graph = await logseq.App.getCurrentGraph();
+    if (!graph) {
+      return logseq.App.showMsg("Kein Graph offen.", "error");
+    }
+    const bereinigt = pfad.replace(/^\.\.\//, "");
+    url = `file://${graph.path}/${bereinigt}`;
+    dateiname = bereinigt.split("/").pop();
+  }
+
+  viewerOeffnen();
+
+  window.dispatchEvent(
+    new CustomEvent("pdf-oeffnen", {
+      detail: { url, titel: dateiname },
+    })
+  );
+}
+
 // Liest den aktuell in Logseq aktiven Block, sucht darin einen PDF-Link
-// (Markdown-Format `[label](pfad.pdf)`), öffnet den Viewer und schickt die
-// PDF-URL per Custom Event an die ViewerGrid-Komponente.
+// (Markdown-Format `[label](pfad.pdf)`) und öffnet ihn im Viewer.
 async function pdfAusBlockOeffnen() {
   const block = await logseq.Editor.getCurrentBlock();
   if (!block) {
@@ -83,22 +113,41 @@ async function pdfAusBlockOeffnen() {
     );
   }
 
-  const relativerPfad = treffer[1];
-  const graph = await logseq.App.getCurrentGraph();
-  if (!graph) {
-    return logseq.App.showMsg("Kein Graph offen.", "error");
-  }
-  const bereinigt = relativerPfad.replace(/^\.\.\//, "");
-  const vollerPfad = `${graph.path}/${bereinigt}`;
-  const dateiname = bereinigt.split("/").pop();
+  pdfAusRelativemPfadOeffnen(treffer[1]);
+}
 
-  viewerOeffnen();
+// Globaler Click-Handler im Logseq-Hauptdokument. Wird in der "capture phase"
+// registriert (drittes Argument `true` bei addEventListener) — d.h. wir bekommen
+// das Event auf dem Weg von <html> nach unten zum Klick-Ziel, BEVOR Logseqs
+// eigene Handler greifen können. Mit stopImmediatePropagation() unterbinden wir
+// dann sowohl andere Listener auf demselben Element als auch das Bubbling.
+function pdfKlickAbfangen(event) {
+  // Nur reiner Linksklick — Strg/Cmd/Shift/Alt + Klick lassen wir durch,
+  // damit der Nutzer PDFs weiterhin "anders" öffnen kann (z.B. neues Tab).
+  if (event.button !== 0) return;
+  if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
 
-  window.dispatchEvent(
-    new CustomEvent("pdf-oeffnen", {
-      detail: { url: `file://${vollerPfad}`, titel: dateiname },
-    })
-  );
+  // Klick könnte auf einem <span> innerhalb des Links liegen — `closest`
+  // klettert im DOM nach oben, bis ein <a>-Vorfahre gefunden wird.
+  const link = event.target && event.target.closest && event.target.closest("a");
+  if (!link) return;
+
+  // getAttribute liest den Original-Wert (relativer Pfad), nicht die vom
+  // Browser aufgelöste absolute URL — wir wollen wissen, was im Markdown stand.
+  const href = link.getAttribute("href") || link.getAttribute("data-href") || "";
+  if (!href) return;
+
+  // Externe URLs nicht abfangen — Logseq soll http(s)-PDFs normal handhaben.
+  if (/^https?:\/\//i.test(href)) return;
+
+  // Nur echte PDF-Endungen (auch mit ?query oder #fragment am Ende).
+  if (!/\.pdf(\?|#|$)/i.test(href)) return;
+
+  // Logseqs eigenen PDF-Viewer-Handler komplett unterdrücken.
+  event.preventDefault();
+  event.stopImmediatePropagation();
+
+  pdfAusRelativemPfadOeffnen(href);
 }
 
 function main() {
@@ -296,6 +345,22 @@ function main() {
   } catch (e) {
     parentLog("MutationObserver konnte nicht installiert werden:", e && e.message);
   }
+
+  // PDF-Linksklicks im Logseq-Hauptdokument abfangen, bevor Logseq seinen
+  // eigenen Viewer öffnet. Capture-phase (`true`) ist hier entscheidend.
+  try {
+    window.parent.document.addEventListener("click", pdfKlickAbfangen, true);
+    parentLog("PDF-Click-Interceptor aktiv");
+  } catch (e) {
+    parentLog("PDF-Click-Interceptor konnte nicht installiert werden:", e && e.message);
+  }
+
+  // Sauber aufräumen, wenn das Plugin entladen wird (Logseq beim Reload/Disable).
+  logseq.beforeunload(async () => {
+    try {
+      window.parent.document.removeEventListener("click", pdfKlickAbfangen, true);
+    } catch (e) {}
+  });
 }
 
 logseq.ready(main).catch(console.error);
