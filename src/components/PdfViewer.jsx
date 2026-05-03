@@ -76,7 +76,7 @@ const stile = {
 const ZOOM_STUFEN = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0]
 const ZOOM_DEFAULT = 1.0
 
-function PdfViewer({ url, titel, onClose }) {
+function PdfViewer({ url, titel, onClose, onAuslagern, ownerDocument }) {
   const [zoom, setZoom] = useState(ZOOM_DEFAULT)
   const [aktuelleSeite, setAktuelleSeite] = useState(1)
   const [kachelBreite, setKachelBreite] = useState(0)
@@ -86,7 +86,7 @@ function PdfViewer({ url, titel, onClose }) {
   const [scroller, setScroller] = useState(null)
   const setScrollerRef = useCallback((el) => setScroller(el), [])
 
-  const { pdfDokument, seitenanzahl, defaultViewport, laden, fehler } = usePdf(url)
+  const { pdfDokument, seitenanzahl, defaultViewport, laden, fehler } = usePdf(url, ownerDocument)
 
   // Container-Breite messen: Basis für die Anzeige-Breite der Seiten (× Zoom).
   // ResizeObserver reagiert auf Größenänderungen der Kachel (z.B. Layout-Resize).
@@ -180,6 +180,15 @@ function PdfViewer({ url, titel, onClose }) {
         <span style={stile.seitenInfo}>
           {aktuelleSeite}/{seitenanzahl}
         </span>
+        {onAuslagern && (
+          <button
+            style={stile.schliessenKopf}
+            onClick={onAuslagern}
+            title="In separatem Fenster öffnen"
+          >
+            ↗
+          </button>
+        )}
         {onClose && (
           <button
             style={stile.schliessenKopf}

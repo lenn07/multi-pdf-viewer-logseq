@@ -25,7 +25,7 @@ async function getPdfjsLib() {
 //   - defaultViewport: { width, height } der ersten Seite bei scale=1 — für Platzhalter-Höhen
 //   - laden: true während das PDF geladen wird
 //   - fehler: Fehlermeldung oder null
-export function usePdf(url) {
+export function usePdf(url, ownerDocument) {
   const [pdfDokument, setPdfDokument] = useState(null)
   const [seitenanzahl, setSeitenanzahl] = useState(0)
   const [defaultViewport, setDefaultViewport] = useState(null)
@@ -47,7 +47,7 @@ export function usePdf(url) {
     getPdfjsLib()
       .then((lib) => {
         if (abgebrochen) return
-        ladeAufgabe = lib.getDocument(url)
+        ladeAufgabe = lib.getDocument(ownerDocument ? { url, ownerDocument } : url)
         return ladeAufgabe.promise
       })
       .then(async (doc) => {

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import PdfViewer from './PdfViewer'
+import PopoutFenster from './PopoutFenster'
 import {
   viewerSchliessen,
   pdfAusBlockOeffnen,
@@ -155,9 +156,9 @@ function ViewerGrid() {
       setPdfListe((aktuelleliste) => {
         if (aktuelleliste.length >= max) {
           const [, ...rest] = aktuelleliste
-          return [...rest, { id: Date.now(), url, titel }]
+          return [...rest, { id: Date.now(), url, titel, ausgelagert: false }]
         }
-        return [...aktuelleliste, { id: Date.now(), url, titel }]
+        return [...aktuelleliste, { id: Date.now(), url, titel, ausgelagert: false }]
       })
     }
 
@@ -169,15 +170,23 @@ function ViewerGrid() {
     setPdfListe((alt) => alt.filter((pdf) => pdf.id !== id))
   }
 
+  function auslagernToggle(id) {
+    setPdfListe((alt) =>
+      alt.map((pdf) => (pdf.id === id ? { ...pdf, ausgelagert: !pdf.ausgelagert } : pdf))
+    )
+  }
+
   const istUebersicht = layoutModus === 'uebersicht'
+  const pdfImGrid = pdfListe.filter((pdf) => !pdf.ausgelagert)
   const anzahl = pdfListe.length
+  const anzahlImGrid = pdfImGrid.length
 
   // Dynamisches Raster für Übersichtsmodus:
   //   cols = ceil(sqrt(N)) → minimale Spalten für annähernd quadratische Kacheln
   //   rows = ceil(N/cols)  → so viele Zeilen wie nötig
   // Beispiele: N=1 → 1×1, N=2 → 2×1, N=3-4 → 2×2, N=5-6 → 3×2, N=7-9 → 3×3
-  const uebersichtSpalten = Math.max(1, Math.ceil(Math.sqrt(anzahl)))
-  const uebersichtZeilen = Math.max(1, Math.ceil(anzahl / uebersichtSpalten))
+  const uebersichtSpalten = Math.max(1, Math.ceil(Math.sqrt(anzahlImGrid)))
+  const uebersichtZeilen = Math.max(1, Math.ceil(anzahlImGrid / uebersichtSpalten))
 
   // Layout-Stile je nach Modus:
   // - Nebeneinander: 1 Zeile, N Spalten, jede Kachel min. KACHEL_MIN_BREITE.
@@ -195,7 +204,7 @@ function ViewerGrid() {
       }
     : {
         display: 'grid',
-        gridTemplateColumns: `repeat(${anzahl}, minmax(${KACHEL_MIN_BREITE}px, 1fr))`,
+        gridTemplateColumns: `repeat(${anzahlImGrid}, minmax(${KACHEL_MIN_BREITE}px, 1fr))`,
         gridTemplateRows: '1fr',
         gap: '4px',
         flex: 1,
@@ -206,6 +215,14 @@ function ViewerGrid() {
 
   return (
     <div style={stile.wrapper}>
+      {pdfListe.filter((pdf) => pdf.ausgelagert).map((pdf) => (
+        <PopoutFenster
+          key={pdf.id}
+          url={pdf.url}
+          titel={pdf.titel}
+          onZurueck={() => auslagernToggle(pdf.id)}
+        />
+      ))}
       <div
         style={{
           ...stile.resizeHandle,
@@ -266,9 +283,15 @@ function ViewerGrid() {
         </div>
       )}
 
-      {anzahl > 0 && (
+      {anzahl > 0 && anzahlImGrid === 0 && (
+        <div style={stile.leererZustand}>
+          Alle PDFs sind in separaten Fenstern ausgelagert.
+        </div>
+      )}
+
+      {anzahlImGrid > 0 && (
         <div style={gridStyle}>
-          {pdfListe.map((pdf) => (
+          {pdfImGrid.map((pdf) => (
             <div
               key={pdf.id}
               style={{ minHeight: 0, minWidth: 0, display: 'flex' }}
@@ -277,6 +300,7 @@ function ViewerGrid() {
                 url={pdf.url}
                 titel={pdf.titel}
                 onClose={() => pdfEntfernen(pdf.id)}
+                onAuslagern={() => auslagernToggle(pdf.id)}
               />
             </div>
           ))}
