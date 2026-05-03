@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { createRoot } from 'react-dom/client'
 import PdfViewer from './PdfViewer'
+import { popupRegistrieren, popupDeregistrieren } from '../rafProxy.js'
 
 const stile = {
   wrapper: {
@@ -50,9 +51,12 @@ function PopoutFenster({ url, titel, onZurueck }) {
       return
     }
 
+    // Popup beim rAF-Proxy registrieren: wenn der Iframe hidden wird, leitet
+    // der Proxy rAF-Aufrufe an dieses sichtbare Fenster um → PDF lädt weiter.
+    popupRegistrieren(fenster)
+
     fenster.document.title = titel
 
-    // Stylesheets übertragen (dev: <style>-Tags, prod: <link> mit absoluter URL)
     document.querySelectorAll('style').forEach((el) =>
       fenster.document.head.appendChild(el.cloneNode(true))
     )
@@ -63,7 +67,6 @@ function PopoutFenster({ url, titel, onZurueck }) {
       fenster.document.head.appendChild(link)
     })
 
-    // Theme-Farben und Dark-Klasse übertragen
     if (document.body.classList.contains('dark')) {
       fenster.document.body.classList.add('dark')
     }
@@ -80,8 +83,6 @@ function PopoutFenster({ url, titel, onZurueck }) {
       onZurueck()
     }
 
-    // ownerDocument = fenster.document: PDF.js injiziert Schriften in das Popup-Dokument
-    // statt in das Haupt-Fenster-Dokument — der Canvas im Popup findet die Schriften damit.
     rootRef.current.render(
       <PopoutInhalt
         url={url}
@@ -98,6 +99,7 @@ function PopoutFenster({ url, titel, onZurueck }) {
 
     return () => {
       fenster.removeEventListener('beforeunload', zurueckRufen)
+      popupDeregistrieren(fenster)
       rootRef.current?.unmount()
       if (!fenster.closed) fenster.close()
     }
