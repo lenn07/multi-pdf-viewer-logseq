@@ -5,6 +5,11 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import "./app.css";
 import ViewerGrid from "./components/ViewerGrid";
+import {
+  annotationCacheLaden,
+  istAnnotationBlock,
+  annotationBlockPruefenUndMerken,
+} from "./utils/annotationCache";
 
 // Aktuelle Breite des Viewers in Prozent der Bildschirmbreite.
 // Grenzen: 20% (fast alles für Logseq) bis 90% (fast alles für PDFs).
@@ -70,30 +75,32 @@ function viewerSchliessen() {
 // Öffnet den Viewer und schickt eine PDF-URL per Custom Event an ViewerGrid.
 // Nimmt entweder einen relativen Pfad (z.B. "../assets/datei.pdf") oder eine
 // fertige `file://`-URL — die Block- und die Click-Quelle liefern Unterschiedliches.
-async function pdfAusRelativemPfadOeffnen(pfad) {
+async function pdfAusRelativemPfadOeffnen(pfad, springZu = null, elternBlockUuid = null) {
   let url;
   let dateiname;
 
   if (/^file:\/\//i.test(pfad)) {
-    // Schon eine absolute file://-URL — direkt nehmen.
     url = pfad;
     const ohneQuery = pfad.split("?")[0].split("#")[0];
     dateiname = decodeURIComponent(ohneQuery.split("/").pop());
   } else {
     const graph = await logseq.App.getCurrentGraph();
-    if (!graph) {
-      return logseq.App.showMsg("Kein Graph offen.", "error");
-    }
+    if (!graph) return logseq.App.showMsg("Kein Graph offen.", "error");
     const bereinigt = pfad.replace(/^\.\.\//, "");
-    url = `file://${graph.path}/${bereinigt}`;
     dateiname = bereinigt.split("/").pop();
+    // Windows: graph.path = "C:/pfad" → braucht führenden Slash für file:///C:/pfad
+    let graphPfad = graph.path.replace(/\\/g, "/");
+    if (!graphPfad.startsWith("/")) graphPfad = "/" + graphPfad;
+    // Pfadteile URL-kodieren (Leerzeichen, Sonderzeichen), aber nicht graph.path
+    const kodiert = bereinigt.split("/").map(encodeURIComponent).join("/");
+    url = `file://${graphPfad}/${kodiert}`;
   }
 
   viewerOeffnen();
 
   window.dispatchEvent(
     new CustomEvent("pdf-oeffnen", {
-      detail: { url, titel: dateiname },
+      detail: { url, titel: dateiname, elternBlockUuid, springZu },
     })
   );
 }
@@ -102,19 +109,12 @@ async function pdfAusRelativemPfadOeffnen(pfad) {
 // (Markdown-Format `[label](pfad.pdf)`) und öffnet ihn im Viewer.
 async function pdfAusBlockOeffnen() {
   const block = await logseq.Editor.getCurrentBlock();
-  if (!block) {
-    return logseq.App.showMsg("Kein Block ausgewählt.", "error");
-  }
+  if (!block) return logseq.App.showMsg("Kein Block ausgewählt.", "error");
 
   const treffer = block.content.match(/\[.*?\]\((.*?\.pdf)\)/);
-  if (!treffer) {
-    return logseq.App.showMsg(
-      "Kein PDF-Link im aktuellen Block gefunden.",
-      "warning"
-    );
-  }
+  if (!treffer) return logseq.App.showMsg("Kein PDF-Link im aktuellen Block gefunden.", "warning");
 
-  pdfAusRelativemPfadOeffnen(treffer[1]);
+  pdfAusRelativemPfadOeffnen(treffer[1], null, block.uuid);
 }
 
 // Globaler Click-Handler im Logseq-Hauptdokument. Wird in der "capture phase"
@@ -123,32 +123,25 @@ async function pdfAusBlockOeffnen() {
 // eigene Handler greifen können. Mit stopImmediatePropagation() unterbinden wir
 // dann sowohl andere Listener auf demselben Element als auch das Bubbling.
 function pdfKlickAbfangen(event) {
-  // Nur reiner Linksklick — Strg/Cmd/Shift/Alt + Klick lassen wir durch,
-  // damit der Nutzer PDFs weiterhin "anders" öffnen kann (z.B. neues Tab).
   if (event.button !== 0) return;
   if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
 
-  // Klick könnte auf einem <span> innerhalb des Links liegen — `closest`
-  // klettert im DOM nach oben, bis ein <a>-Vorfahre gefunden wird.
-  const link = event.target && event.target.closest && event.target.closest("a");
+  const link = event.target?.closest?.("a");
   if (!link) return;
 
-  // getAttribute liest den Original-Wert (relativer Pfad), nicht die vom
-  // Browser aufgelöste absolute URL — wir wollen wissen, was im Markdown stand.
   const href = link.getAttribute("href") || link.getAttribute("data-href") || "";
   if (!href) return;
-
-  // Externe URLs nicht abfangen — Logseq soll http(s)-PDFs normal handhaben.
   if (/^https?:\/\//i.test(href)) return;
-
-  // Nur echte PDF-Endungen (auch mit ?query oder #fragment am Ende).
   if (!/\.pdf(\?|#|$)/i.test(href)) return;
 
-  // Logseqs eigenen PDF-Viewer-Handler komplett unterdrücken.
   event.preventDefault();
   event.stopImmediatePropagation();
 
-  pdfAusRelativemPfadOeffnen(href);
+  // Block-UUID des auslösenden Blocks — Logseq nutzt 'blockid' (nicht data-block-id)
+  const blockEl = event.target.closest("[blockid]") || event.target.closest("[data-block-id]");
+  const elternBlockUuid = blockEl?.getAttribute("blockid") || blockEl?.dataset?.blockId || null;
+
+  pdfAusRelativemPfadOeffnen(href, null, elternBlockUuid);
 }
 
 function main() {
@@ -349,17 +342,124 @@ function main() {
 
   // PDF-Linksklicks im Logseq-Hauptdokument abfangen, bevor Logseq seinen
   // eigenen Viewer öffnet. Capture-phase (`true`) ist hier entscheidend.
-  try {
-    window.parent.document.addEventListener("click", pdfKlickAbfangen, true);
-    parentLog("PDF-Click-Interceptor aktiv");
-  } catch (e) {
-    parentLog("PDF-Click-Interceptor konnte nicht installiert werden:", e && e.message);
+  // WICHTIG: annotationKlickAbfangen MUSS davor registriert werden, damit
+  // Annotation-Blöcke (mit hl-stamp) zuerst behandelt werden — nicht als
+  // generischer PDF-Link.
+
+  // DOM-Heuristik: Block sieht aus wie ein Area-Annotation, wenn er ein <img>
+  // enthält dessen src dem Logseq-Annotation-Pattern entspricht. Synchron prüfbar,
+  // fängt Annotation-Blöcke aus früheren Sessions auch ohne Cache.
+  function blockSiehtWieAnnotationAus(blockEl) {
+    const img = blockEl.querySelector?.("img");
+    if (!img) return false;
+    const src = img.getAttribute("src") || "";
+    return /\/\d+_[0-9a-f-]+_[\w-]+\.png/i.test(src);
   }
+
+  // Click-Handler ist SYNC — preventDefault muss passieren bevor Logseqs eigener
+  // Handler den Klick verarbeitet. Erkennung über Sync-Cache ODER DOM-Heuristik.
+  // Erst NACH preventDefault dürfen async-Operationen laufen.
+  function annotationKlickAbfangen(event) {
+    if (event.button !== 0) return;
+    if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+
+    const blockEl = event.target?.closest?.("[blockid]") || event.target?.closest?.("[data-block-id]");
+    if (!blockEl) return;
+
+    const blockId = blockEl.getAttribute("blockid") || blockEl.dataset?.blockId;
+    if (!blockId) return;
+
+    if (!istAnnotationBlock(blockId) && !blockSiehtWieAnnotationAus(blockEl)) {
+      annotationBlockPruefenUndMerken(blockId);
+      return;
+    }
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+
+    (async () => {
+      let block;
+      try { block = await logseq.Editor.getBlock(blockId); } catch (_) { return; }
+
+      // Logseq normalisiert Properties beim Lesen zu camelCase (lsType statt ls-type).
+      // Beim Schreiben (insertBlock) erwartet es aber kebab-case.
+      const props = block?.properties;
+      if (!props || props.lsType !== "annotation") return;
+
+      const pdfPfad = await pdfPfadFinden(block);
+      if (!pdfPfad) {
+        logseq.App.showMsg("Kein PDF-Link auf der Seite gefunden.", "warning");
+        return;
+      }
+
+      pdfAusRelativemPfadOeffnen(
+        pdfPfad,
+        { seite: Number(props.hlPage), hlStamp: String(props.hlStamp) },
+        block.uuid,
+      );
+    })();
+  }
+
+  // Findet den PDF-Pfad für einen Annotation-Block in dieser Reihenfolge:
+  //   1. block.properties['hl-pdf']  — von neueren Highlights direkt am Block gespeichert
+  //   2. erster PDF-Link irgendwo auf der Page (rekursiv durch alle Blöcke)
+  //   3. Eltern-Block (Legacy für Highlights vor hl-pdf-Property)
+  async function pdfPfadFinden(block) {
+    if (block.properties?.hlPdf) return block.properties.hlPdf;
+
+    try {
+      const baum = await logseq.Editor.getPageBlocksTree(block.page?.id ?? block.page);
+      const pfad = pdfLinkInBaumFinden(baum);
+      if (pfad) return pfad;
+    } catch (_) {}
+
+    try {
+      const eltern = await logseq.Editor.getBlock(block.parent?.id ?? block.parent);
+      const m = eltern?.content?.match(/\[.*?\]\((.*?\.pdf[^)]*)\)/);
+      if (m) return m[1];
+    } catch (_) {}
+
+    return null;
+  }
+
+  function pdfLinkInBaumFinden(blocks) {
+    if (!Array.isArray(blocks)) return null;
+    for (const b of blocks) {
+      const m = b.content?.match(/\[.*?\]\((.*?\.pdf[^)]*)\)/);
+      if (m) return m[1];
+      if (b.children) {
+        const treffer = pdfLinkInBaumFinden(b.children);
+        if (treffer) return treffer;
+      }
+    }
+    return null;
+  }
+
+  // Reihenfolge wichtig: Annotation-Handler ZUERST registrieren — er fängt
+  // Klicks auf Highlight-Blöcke ab. Der PDF-Handler greift danach für generische
+  // PDF-Links in regulären Blöcken (`[label](datei.pdf)`).
+  // Zusätzlich mousedown — Logseq triggert die PDF-Öffnung u.U. schon dort,
+  // bevor das click-Event überhaupt durchkommt.
+  try {
+    window.parent.document.addEventListener("mousedown", annotationKlickAbfangen, true);
+    window.parent.document.addEventListener("click", annotationKlickAbfangen, true);
+    window.parent.document.addEventListener("click", pdfKlickAbfangen, true);
+    parentLog("Click-Interceptoren aktiv");
+  } catch (e) {
+    parentLog("Click-Interceptoren konnten nicht installiert werden:", e?.message);
+  }
+
+  // Bekannte Annotation-Blöcke vorab in den Sync-Cache laden — damit auch
+  // Highlights aus früheren Sessions / vom nativen PDF-Viewer beim ersten
+  // Klick funktionieren statt erst beim zweiten.
+  annotationCacheLaden();
 
   // Sauber aufräumen, wenn das Plugin entladen wird (Logseq beim Reload/Disable).
   logseq.beforeunload(async () => {
     try {
       window.parent.document.removeEventListener("click", pdfKlickAbfangen, true);
+      window.parent.document.removeEventListener("click", annotationKlickAbfangen, true);
+      window.parent.document.removeEventListener("mousedown", annotationKlickAbfangen, true);
     } catch (e) {}
   });
 }

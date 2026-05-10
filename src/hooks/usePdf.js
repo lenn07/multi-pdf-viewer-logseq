@@ -76,3 +76,5 @@ export function usePdf(url, ownerDocument) {
 
   return { pdfDokument, seitenanzahl, defaultViewport, laden, fehler }
 }
+
+export { getPdfjsLib }
