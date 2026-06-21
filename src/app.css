@@ -90,13 +90,6 @@ button:disabled {
   --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
   --min-font-size-inv: calc(1 / var(--min-font-size));
 }
-.pdf-text-layer.text-modus {
-  pointer-events: auto;
-}
-.pdf-text-layer.text-modus :is(span, br) {
-  user-select: text;
-}
-
 .pdf-text-layer :is(span, br) {
   color: transparent;
   position: absolute;
@@ -148,16 +141,4 @@ button:disabled {
 }
 .pdf-text-layer br::selection {
   background: transparent;
-}
-
-/* Highlight Puls-Animation */
-@keyframes highlight-pulse {
-  0%   { opacity: 1; }
-  30%  { opacity: 0.2; }
-  60%  { opacity: 1; }
-  80%  { opacity: 0.4; }
-  100% { opacity: 1; }
-}
-.highlight-puls {
-  animation: highlight-pulse 1.2s ease-in-out;
 }

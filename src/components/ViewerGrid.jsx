@@ -150,25 +150,15 @@ function ViewerGrid() {
 
   useEffect(() => {
     function pdfEmpfangen(event) {
-      const { url, titel, elternBlockUuid, springZu } = event.detail
+      const { url, titel } = event.detail
       const max = logseq?.settings?.maxViewer ?? 4
 
       setPdfListe((aktuelleliste) => {
-        // Wenn PDF schon offen und springZu mitkommt: nur springZu aktualisieren
-        const bestehendeIndex = aktuelleliste.findIndex((p) => p.url === url)
-        if (bestehendeIndex !== -1 && springZu) {
-          return aktuelleliste.map((p, i) =>
-            i === bestehendeIndex ? { ...p, springZu } : p
-          )
-        }
-
         const neuer = {
           id: Date.now(),
           url,
           titel,
           ausgelagert: false,
-          elternBlockUuid: elternBlockUuid || null,
-          springZu: springZu || null,
         }
 
         if (aktuelleliste.length >= max) {
@@ -318,8 +308,6 @@ function ViewerGrid() {
                 titel={pdf.titel}
                 onClose={() => pdfEntfernen(pdf.id)}
                 onAuslagern={() => auslagernToggle(pdf.id)}
-                elternBlockUuid={pdf.elternBlockUuid}
-                springZu={pdf.springZu}
               />
             </div>
           ))}

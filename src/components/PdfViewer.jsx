@@ -1,7 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react'
 import { usePdf } from '../hooks/usePdf'
-import { useAnnotations } from '../hooks/useAnnotations'
-import { useFileSystemAccess } from '../hooks/useFileSystemAccess'
 import PdfPage from './PdfPage'
 
 const stile = {
@@ -33,52 +31,41 @@ const stile = {
     padding: '2px 4px', borderTop: '1px solid var(--ls-border-color, #ccc)',
     flexShrink: 0, fontSize: '12px',
   },
-  modusBtn: {
-    padding: '1px 6px', fontSize: '11px', cursor: 'pointer',
-    border: '1px solid var(--ls-border-color, #ccc)', borderRadius: '3px',
-    background: 'transparent', color: 'var(--ls-primary-text-color, #333)',
-  },
-  modusBtnAktiv: { background: 'var(--ls-secondary-background-color, #eee)', fontWeight: 'bold' },
   zoomAnzeige: {
     fontSize: '11px', color: 'var(--ls-secondary-text-color, #888)',
     minWidth: '32px', textAlign: 'center',
-  },
-  ordnerBtn: {
-    fontSize: '11px', padding: '1px 6px', cursor: 'pointer',
-    border: '1px solid var(--ls-border-color, #ccc)', borderRadius: '3px',
-    background: 'var(--ls-secondary-background-color, #eee)',
-    color: 'var(--ls-primary-text-color, #333)',
   },
 }
 
 const ZOOM_STUFEN  = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0]
 const ZOOM_DEFAULT = 1.0
 
-function PdfViewer({ url, titel, onClose, onAuslagern, ownerDocument, elternBlockUuid, springZu }) {
+function PdfViewer({ url, titel, onClose, onAuslagern, ownerDocument }) {
   const [zoom,           setZoom]           = useState(ZOOM_DEFAULT)
   const [aktuelleSeite,  setAktuelleSeite]  = useState(1)
   const [kachelBreite,   setKachelBreite]   = useState(0)
   const [scroller,       setScroller]       = useState(null)
-  const [modus,          setModus]          = useState('text') // 'text' | 'bereich'
-  const [activeStamp,    setActiveStamp]    = useState(null)
   const setScrollerRef = useCallback((el) => setScroller(el), [])
+  // Scroll-Anker für den Größen-Reanchor: die Seite am oberen Rand plus der
+  // Bruchteil, wie weit man in sie hineingescrollt ist. Höhenunabhängig — dadurch
+  // bleibt die Position auch bei gemischten/kurzen Seiten exakt erhalten.
+  const ankerRef = useRef({ page: 1, frac: 0 })
+  // Letzte verarbeitete Zielbreite, um einen echten Größenwechsel vom ersten
+  // Erscheinen (0 → X) zu unterscheiden.
+  const vorherigeBreiteRef = useRef(0)
 
   const { pdfDokument, seitenanzahl, defaultViewport, laden, fehler } = usePdf(url, ownerDocument)
-  const { annotations, neuladen, highlightHinzufuegen, highlightEntfernen } = useAnnotations(url)
-  const { ordnerVerbunden, ordnerVerbinden, pngSchreiben, pngLoeschen } = useFileSystemAccess()
-
-  // springZu: { seite, hlStamp } — von main.jsx Annotation-Interceptor
-  useEffect(() => {
-    if (!springZu || !pdfDokument) return
-    zuSeite(springZu.seite)
-    setActiveStamp(springZu.hlStamp)
-    const t = setTimeout(() => setActiveStamp(null), 2000)
-    return () => clearTimeout(t)
-  }, [springZu, pdfDokument])
 
   useEffect(() => {
     if (!scroller) return
-    function messen() { setKachelBreite(scroller.clientWidth) }
+    // 0-Breite ignorieren: Beim Verstecken des Viewers (hideMainUI) meldet der
+    // Observer clientWidth = 0. Würden wir das übernehmen, würde zielBreite 0 und
+    // die Seiten-Wrapper würden ausgehängt → Scroll-Position ginge verloren.
+    // Wir behalten stattdessen die letzte gültige Breite, Seiten bleiben gerendert.
+    function messen() {
+      const breite = scroller.clientWidth
+      if (breite > 0) setKachelBreite(breite)
+    }
     messen()
     const obs = new ResizeObserver(messen)
     obs.observe(scroller)
@@ -91,9 +78,19 @@ function PdfViewer({ url, titel, onClose, onAuslagern, ownerDocument, elternBloc
     function aktualisieren() {
       const elemente = scroller.querySelectorAll('[data-seite]')
       if (!elemente.length) return
-      const ref = scroller.scrollTop + scroller.clientHeight / 3
+      const oben = scroller.scrollTop
+      const ref = oben + scroller.clientHeight / 3
       let beste = 1
       for (const el of elemente) {
+        // Anker: letzte Seite, deren Anfang am oberen Rand oder darüber liegt,
+        // samt Bruchteil hinein. Wird für den höhenunabhängigen Resize-Reanchor genutzt.
+        if (el.offsetTop <= oben) {
+          const h = el.offsetHeight
+          ankerRef.current = {
+            page: parseInt(el.dataset.seite, 10),
+            frac: h > 0 ? (oben - el.offsetTop) / h : 0,
+          }
+        }
         if (el.offsetTop > ref) break
         beste = parseInt(el.dataset.seite, 10)
       }
@@ -109,6 +106,22 @@ function PdfViewer({ url, titel, onClose, onAuslagern, ownerDocument, elternBloc
     return () => scroller.removeEventListener('scroll', onScroll)
   }, [scroller, pdfDokument, kachelBreite, zoom])
 
+  // Bei Größenänderung (Viewer-Breite, Zoom oder PDF hinzugefügt/entfernt → andere
+  // Kachelbreite) reflowen die Seiten und dieselbe Pixel-Scrollposition zeigt auf
+  // einen anderen Inhalt. Deshalb nach jedem echten Größenwechsel den Scroll wieder
+  // exakt auf den Anker (Seite am oberen Rand + Bruchteil) setzen — höhenunabhängig,
+  // damit es auch bei gemischten/kurzen Seiten nicht driftet. Als Layout-Effekt
+  // (vor dem Paint, kein Flackern). vorher <= 0 überspringt das erste Erscheinen.
+  useLayoutEffect(() => {
+    const zielBreite = kachelBreite * zoom
+    const vorher = vorherigeBreiteRef.current
+    vorherigeBreiteRef.current = zielBreite
+    if (!scroller || zielBreite <= 0 || vorher <= 0) return
+    const { page, frac } = ankerRef.current
+    const ziel = scroller.querySelector(`[data-seite="${page}"]`)
+    if (ziel) scroller.scrollTop = ziel.offsetTop + frac * ziel.offsetHeight
+  }, [kachelBreite, zoom, scroller])
+
   function zuSeite(n) {
     if (!scroller) return
     const ziel = scroller.querySelector(`[data-seite="${n}"]`)
@@ -120,73 +133,16 @@ function PdfViewer({ url, titel, onClose, onAuslagern, ownerDocument, elternBloc
   function zoomErhoehen()   { setZoom((z) => ZOOM_STUFEN.find((s) => s > z) ?? z) }
   function zoomVerringern() { setZoom((z) => ZOOM_STUFEN.findLast((s) => s < z) ?? z) }
 
-  async function onAnnotationErstellt({ ednHighlight }) {
-    await highlightHinzufuegen(ednHighlight)
-  }
-
-  // Komplett-Löschung: EDN-Eintrag, Logseq-Block (per hl-stamp gefunden) und
-  // bei Bereichs-Highlights das zugehörige PNG. Reihenfolge: erst Block via
-  // Datascript suchen (solange Block + UUID existieren), dann EDN entfernen,
-  // dann Block löschen, dann PNG. Wenn der Block fehlt (User hat ihn manuell
-  // gelöscht), entfernen wir trotzdem den EDN-Eintrag — sonst bliebe er
-  // verwaist sichtbar.
-  async function onAnnotationLoeschen(stamp) {
-    if (!stamp) return
-    try {
-      let blockUuid = null
-      let pageName  = null
-      try {
-        // logseq.DB.q mit Property-Filter ist über Versionen stabil; Datascript
-        // mit get-on-properties kann je nach Logseq-Version scheitern.
-        const treffer = await logseq.DB.q(`(property hl-stamp "${stamp}")`)
-        const block   = Array.isArray(treffer) ? treffer[0] : null
-        if (block?.uuid) {
-          blockUuid = block.uuid
-          const pageId = block.page?.id ?? block.page
-          if (pageId) {
-            const page = await logseq.Editor.getPage(pageId)
-            pageName = page?.originalName || page?.name || null
-          }
-        }
-      } catch (e) {
-        console.warn('[MultiPdfViewer] Block-Suche fehlgeschlagen:', e.message)
-      }
-
-      const entfernt = await highlightEntfernen(stamp)
-
-      if (blockUuid) {
-        try { await logseq.Editor.removeBlock(blockUuid) }
-        catch (e) { console.error('[MultiPdfViewer] removeBlock fehlgeschlagen:', e.message) }
-      }
-
-      const istArea = entfernt?.position?.rects?.values?.length === 0 || !entfernt?.position?.rects?.values
-      const seite   = entfernt?.page
-      if (istArea && blockUuid && pageName && seite && pngLoeschen) {
-        const dateiname = `${seite}_${blockUuid}_${stamp}.png`
-        await pngLoeschen(pageName, dateiname)
-      }
-    } catch (err) {
-      console.error('[MultiPdfViewer] Highlight-Löschen fehlgeschlagen:', err)
-      logseq.App?.showMsg?.('Fehler beim Löschen: ' + err.message, 'error')
-    }
-  }
-
   if (laden)  return <div style={{ ...stile.container, padding: '8px', fontSize: '12px' }}>PDF wird geladen…</div>
   if (fehler) return <div style={{ ...stile.container, color: 'red', padding: '8px', fontSize: '12px' }}>{fehler}</div>
 
   const zielBreite = Math.max(0, kachelBreite * zoom)
-  const highlightsAktiv = elternBlockUuid && ordnerVerbunden
 
   return (
     <div style={stile.container}>
       <div style={stile.kopfzeile}>
         <strong style={stile.titel} title={titel}>{titel}</strong>
         <span style={stile.seitenInfo}>{aktuelleSeite}/{seitenanzahl}</span>
-        {!ordnerVerbunden && (
-          <button style={stile.ordnerBtn} onClick={ordnerVerbinden} title="Assets-Ordner verbinden um Highlights zu speichern">
-            🗂 Ordner
-          </button>
-        )}
         {onAuslagern && (
           <button style={stile.schliessenKopf} onClick={onAuslagern} title="In separatem Fenster öffnen">↗</button>
         )}
@@ -205,13 +161,6 @@ function PdfViewer({ url, titel, onClose, onAuslagern, ownerDocument, elternBloc
               zielBreite={zielBreite}
               defaultViewport={defaultViewport}
               scrollContainer={scroller}
-              modus={highlightsAktiv ? modus : 'text'}
-              annotations={annotations}
-              activeStamp={activeStamp}
-              onAnnotationErstellt={onAnnotationErstellt}
-              onAnnotationLoeschen={onAnnotationLoeschen}
-              pdfUrl={url}
-              pngSchreiben={pngSchreiben}
             />
           ))}
       </div>
@@ -219,26 +168,6 @@ function PdfViewer({ url, titel, onClose, onAuslagern, ownerDocument, elternBloc
       <div style={stile.navigation}>
         <button onClick={vorherige} disabled={aktuelleSeite <= 1} title="Vorherige Seite">←</button>
         <button onClick={naechste} disabled={aktuelleSeite >= seitenanzahl} title="Nächste Seite">→</button>
-
-        {highlightsAktiv && (
-          <>
-            <button
-              onClick={() => setModus('text')}
-              style={{ ...stile.modusBtn, ...(modus === 'text' ? stile.modusBtnAktiv : {}) }}
-              title="Textauswahl-Modus"
-            >T</button>
-            <button
-              onClick={() => setModus('bereich')}
-              style={{ ...stile.modusBtn, ...(modus === 'bereich' ? stile.modusBtnAktiv : {}) }}
-              title="Bereichsauswahl-Modus"
-            >⬚</button>
-            <button
-              onClick={() => setModus('loeschen')}
-              style={{ ...stile.modusBtn, ...(modus === 'loeschen' ? stile.modusBtnAktiv : {}) }}
-              title="Lösch-Modus: Highlight anklicken zum Entfernen"
-            >🗑</button>
-          </>
-        )}
 
         <span style={{ flex: 1 }} />
         <button onClick={zoomVerringern} disabled={zoom <= ZOOM_STUFEN[0]} title="Verkleinern">−</button>
