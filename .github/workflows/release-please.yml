@@ -1,0 +1,66 @@
+name: Release Please
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  PLUGIN_NAME: multi-pdf-viewer
+
+jobs:
+  # 1. Pflegt den Release-PR und erstellt bei dessen Merge Tag + GitHub-Release.
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  # 2. Läuft nur, wenn gerade ein Release erstellt wurde: baut, testet, packt das Zip
+  #    und hängt es als Asset an das von release-please erstellte Release.
+  build:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.x"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Package plugin
+        run: |
+          mkdir ${{ env.PLUGIN_NAME }}
+          cp -r dist ${{ env.PLUGIN_NAME }}/
+          mkdir -p ${{ env.PLUGIN_NAME }}/public
+          cp public/icon.png ${{ env.PLUGIN_NAME }}/public/
+          cp plugin.edn package.json README.md LICENSE ${{ env.PLUGIN_NAME }}/
+          zip -r ${{ env.PLUGIN_NAME }}-${{ needs.release-please.outputs.tag_name }}.zip ${{ env.PLUGIN_NAME }}
+
+      - name: Upload release asset
+        run: gh release upload ${{ needs.release-please.outputs.tag_name }} ${{ env.PLUGIN_NAME }}-${{ needs.release-please.outputs.tag_name }}.zip --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
