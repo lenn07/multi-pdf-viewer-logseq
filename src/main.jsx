@@ -5,6 +5,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import "./app.css";
 import ViewerGrid from "./components/ViewerGrid";
+import { dateipfadAusUrl, pdfDateinameAusText } from "./dateipfad";
 
 // Aktuelle Breite des Viewers in Prozent der Bildschirmbreite.
 // Grenzen: 20% (fast alles für Logseq) bis 90% (fast alles für PDFs).
@@ -67,35 +68,41 @@ function viewerSchliessen() {
   } catch (e) {}
 }
 
-// Öffnet den Viewer und schickt eine PDF-URL per Custom Event an ViewerGrid.
-// Nimmt entweder einen relativen Pfad (z.B. "../assets/datei.pdf") oder eine
-// fertige `file://`-URL — die Block- und die Click-Quelle liefern Unterschiedliches.
-async function pdfAusRelativemPfadOeffnen(pfad) {
-  let url;
-  let dateiname;
-
+// Wandelt einen PDF-Verweis in eine fertige `file://`-URL plus Dateinamen um.
+// Akzeptiert entweder einen relativen Pfad (z.B. "../assets/datei.pdf") oder
+// eine bereits fertige `file://`-URL. Gibt `null` zurück, wenn kein Graph offen
+// ist. Wird sowohl vom Viewer-Öffnen als auch vom "Im Explorer anzeigen" genutzt.
+async function pfadZuFileUrl(pfad) {
   if (/^file:\/\//i.test(pfad)) {
-    url = pfad;
     const ohneQuery = pfad.split("?")[0].split("#")[0];
-    dateiname = decodeURIComponent(ohneQuery.split("/").pop());
-  } else {
-    const graph = await logseq.App.getCurrentGraph();
-    if (!graph) return logseq.App.showMsg("Kein Graph offen.", "error");
-    const bereinigt = pfad.replace(/^\.\.\//, "");
-    dateiname = bereinigt.split("/").pop();
-    // Windows: graph.path = "C:/pfad" → braucht führenden Slash für file:///C:/pfad
-    let graphPfad = graph.path.replace(/\\/g, "/");
-    if (!graphPfad.startsWith("/")) graphPfad = "/" + graphPfad;
-    // Pfadteile URL-kodieren (Leerzeichen, Sonderzeichen), aber nicht graph.path
-    const kodiert = bereinigt.split("/").map(encodeURIComponent).join("/");
-    url = `file://${graphPfad}/${kodiert}`;
+    return { url: pfad, dateiname: decodeURIComponent(ohneQuery.split("/").pop()) };
   }
+
+  const graph = await logseq.App.getCurrentGraph();
+  if (!graph) {
+    logseq.App.showMsg("Kein Graph offen.", "error");
+    return null;
+  }
+  const bereinigt = pfad.replace(/^\.\.\//, "");
+  const dateiname = bereinigt.split("/").pop();
+  // Windows: graph.path = "C:/pfad" → braucht führenden Slash für file:///C:/pfad
+  let graphPfad = graph.path.replace(/\\/g, "/");
+  if (!graphPfad.startsWith("/")) graphPfad = "/" + graphPfad;
+  // Pfadteile URL-kodieren (Leerzeichen, Sonderzeichen), aber nicht graph.path
+  const kodiert = bereinigt.split("/").map(encodeURIComponent).join("/");
+  return { url: `file://${graphPfad}/${kodiert}`, dateiname };
+}
+
+// Öffnet den Viewer und schickt eine PDF-URL per Custom Event an ViewerGrid.
+async function pdfAusRelativemPfadOeffnen(pfad) {
+  const res = await pfadZuFileUrl(pfad);
+  if (!res) return;
 
   viewerOeffnen();
 
   window.dispatchEvent(
     new CustomEvent("pdf-oeffnen", {
-      detail: { url, titel: dateiname },
+      detail: { url: res.url, titel: res.dateiname },
     })
   );
 }
@@ -135,6 +142,172 @@ function pdfKlickAbfangen(event) {
   pdfAusRelativemPfadOeffnen(href);
 }
 
+// Ermittelt aus einem angeklickten Link einen PDF-Verweis (relativer Pfad oder
+// file://-URL) oder `null`, wenn es kein PDF ist. Behandelt zwei Fälle:
+//   1. Datei-Link  [label](../assets/x.pdf)  → href endet auf ".pdf"
+//   2. Seiten-Ref  [[📚 x.pdf]]              → Seitenname endet auf ".pdf"
+//      (Logseq zeigt davor evtl. ein Icon/Emoji; das wird entfernt und der
+//       Rest als Datei im assets-Ordner des Graphen angenommen.)
+function pdfPfadAusLink(link) {
+  const href = link.getAttribute("href") || link.getAttribute("data-href") || "";
+  if (href && !/^https?:\/\//i.test(href) && /\.pdf(\?|#|$)/i.test(href)) {
+    return href;
+  }
+
+  const ref = link.getAttribute("data-ref") || link.textContent || "";
+  const name = pdfDateinameAusText(ref);
+  if (name) return "../assets/" + name;
+  return null;
+}
+
+// Aktuell offenes Kontextmenü-DOM im Logseq-Hauptfenster (oder null) und die
+// Funktion, die seine globalen Listener wieder abmeldet.
+let aktivesKontextmenu = null;
+let kontextmenuAufraeumen = null;
+
+function kontextmenuSchliessen() {
+  if (kontextmenuAufraeumen) {
+    try { kontextmenuAufraeumen(); } catch (e) {}
+    kontextmenuAufraeumen = null;
+  }
+  if (aktivesKontextmenu) {
+    try { aktivesKontextmenu.remove(); } catch (e) {}
+    aktivesKontextmenu = null;
+  }
+}
+
+// Öffnet das einfache Kontextmenü an Cursor-Position im Logseq-Hauptdokument.
+// Das Menü MUSS im Parent-Dokument leben (nicht im Plugin-iframe), weil der
+// PDF-Link links in Logseq sitzt, der iframe aber rechts.
+function kontextmenuOeffnen(x, y, pfad) {
+  kontextmenuSchliessen();
+  const doc = window.parent.document;
+
+  const menu = doc.createElement("div");
+  menu.className = "multi-pdf-kontextmenu";
+  menu.style.left = x + "px";
+  menu.style.top = y + "px";
+
+  const eintrag = doc.createElement("div");
+  eintrag.className = "multi-pdf-kontextmenu-eintrag";
+  eintrag.textContent = "📂  " + EXPLORER_LABEL;
+  eintrag.addEventListener("click", () => {
+    kontextmenuSchliessen();
+    pdfImExplorerAusLink(pfad);
+  });
+  menu.appendChild(eintrag);
+
+  doc.body.appendChild(menu);
+  aktivesKontextmenu = menu;
+
+  // Schließen bei Klick AUSSERHALB des Menüs, bei Scroll oder Escape.
+  // WICHTIG: Klicks INNERHALB des Menüs dürfen es nicht schließen — sonst würde
+  // der mousedown (Capture-Phase) das Menü entfernen, bevor der Eintrag-Klick
+  // ankommt, und die Aktion liefe nie.
+  const aufMaus = (e) => { if (!menu.contains(e.target)) kontextmenuSchliessen(); };
+  const aufScroll = () => kontextmenuSchliessen();
+  const aufEsc = (e) => { if (e.key === "Escape") kontextmenuSchliessen(); };
+
+  kontextmenuAufraeumen = () => {
+    doc.removeEventListener("mousedown", aufMaus, true);
+    doc.removeEventListener("scroll", aufScroll, true);
+    doc.removeEventListener("keydown", aufEsc, true);
+  };
+
+  // Verzögert registrieren, damit der aktuelle Rechtsklick das Menü nicht sofort
+  // wieder schließt.
+  setTimeout(() => {
+    doc.addEventListener("mousedown", aufMaus, true);
+    doc.addEventListener("scroll", aufScroll, true);
+    doc.addEventListener("keydown", aufEsc, true);
+  }, 0);
+}
+
+// Löst den Verweis zu einer file://-URL auf und zeigt die Datei im Explorer.
+async function pdfImExplorerAusLink(pfad) {
+  const res = await pfadZuFileUrl(pfad);
+  if (!res) return;
+  imDateiexplorerAnzeigen(res.url);
+}
+
+// Globaler Kontextmenü-Handler (Rechtsklick / Zwei-Finger-Tipp) im Logseq-
+// Hauptdokument. Capture-phase wie beim Klick-Abfänger: greift nur bei
+// PDF-Links und ersetzt dort Logseqs eigenes Menü. Bei allem anderen lassen
+// wir Logseqs Standardmenü unangetastet.
+function pdfKontextmenuAbfangen(event) {
+  const link = event.target?.closest?.("a");
+  if (!link) return;
+
+  const pfad = pdfPfadAusLink(link);
+  if (!pfad) return;
+
+  event.preventDefault();
+  event.stopImmediatePropagation();
+
+  kontextmenuOeffnen(event.clientX, event.clientY, pfad);
+}
+
+// Plattformabhängige Menü-Beschriftung (Finder auf macOS, sonst Explorer).
+const istMac =
+  typeof navigator !== "undefined" &&
+  /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || "");
+const EXPLORER_LABEL = istMac ? "Im Finder anzeigen" : "Im Explorer anzeigen";
+
+// Log ins Logseq-Hauptfenster (statt ins iframe), damit Meldungen in derselben
+// Console landen, die der Nutzer ohnehin offen hat.
+function hauptLog(...args) {
+  try { window.parent.console.log("[MultiPdfViewer]", ...args); }
+  catch (e) { console.log("[MultiPdfViewer]", ...args); }
+}
+
+// Die in Frage kommenden Host-Fenster (Logseq-Hauptrenderer).
+function hostFenster() {
+  return [window.parent, window.top, window].filter(Boolean);
+}
+
+// Zeigt die zur PDF gehörende Datei im Datei-Manager des Betriebssystems an
+// (Finder auf macOS, Explorer auf Windows, Dateimanager auf Linux) und markiert
+// sie dort. Logseq ist eine Electron-App; der bewährte Weg ist die generische
+// `apis.doAction`-Bridge, über die Logseq selbst seine Assets im Finder zeigt:
+//   apis.doAction(["openFileInFolder", pfad])
+//     → Main-Prozess-Handler :openFileInFolder → shell.showItemInFolder(pfad).
+function imDateiexplorerAnzeigen(url) {
+  const pfad = dateipfadAusUrl(url);
+  if (!pfad) {
+    return logseq.App.showMsg("Datei kann nur für lokale PDFs angezeigt werden.", "warning");
+  }
+
+  // (1) Primärer Weg: Logseqs doAction-Bridge.
+  for (const win of hostFenster()) {
+    let apis;
+    try { apis = win.apis; } catch (e) { continue; }
+    if (apis && typeof apis.doAction === "function") {
+      try {
+        const r = apis.doAction(["openFileInFolder", pfad]);
+        if (r && typeof r.catch === "function") {
+          r.catch((e) => hauptLog("doAction openFileInFolder warf", e && e.message));
+        }
+        return;
+      } catch (e) { hauptLog("doAction openFileInFolder warf", e && e.message); }
+    }
+  }
+
+  // (2) Fallback für andere Umgebungen: direkter Electron-Zugriff.
+  for (const win of hostFenster()) {
+    try {
+      const req = win.require;
+      const electron = typeof req === "function" && req("electron");
+      if (electron && electron.shell && typeof electron.shell.showItemInFolder === "function") {
+        electron.shell.showItemInFolder(pfad);
+        return;
+      }
+    } catch (e) {}
+  }
+
+  hauptLog("Reveal fehlgeschlagen — keine Bridge gefunden", pfad);
+  logseq.App.showMsg("Konnte die Datei nicht im Datei-Manager anzeigen.", "error");
+}
+
 function main() {
   const root = createRoot(document.getElementById("app"));
   root.render(<ViewerGrid />);
@@ -152,6 +325,27 @@ function main() {
   logseq.provideStyle(`
     body.pdf-viewer-open {
       box-sizing: border-box !important;
+    }
+    .multi-pdf-kontextmenu {
+      position: fixed;
+      z-index: 9999;
+      min-width: 180px;
+      padding: 4px;
+      background: var(--ls-primary-background-color, #fff);
+      color: var(--ls-primary-text-color, #333);
+      border: 1px solid var(--ls-border-color, #ccc);
+      border-radius: 6px;
+      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
+      font-size: 13px;
+    }
+    .multi-pdf-kontextmenu-eintrag {
+      padding: 6px 10px;
+      cursor: pointer;
+      border-radius: 4px;
+      white-space: nowrap;
+    }
+    .multi-pdf-kontextmenu-eintrag:hover {
+      background: var(--ls-secondary-background-color, #eee);
     }
   `);
 
@@ -341,10 +535,22 @@ function main() {
     parentLog("Click-Interceptor konnte nicht installiert werden:", e?.message);
   }
 
+  // PDF-Rechtsklicks im Logseq-Hauptdokument abfangen und ein eigenes
+  // Kontextmenü ("Im Finder/Explorer anzeigen") zeigen. Ebenfalls capture-phase,
+  // damit wir vor Logseqs eigenem Kontextmenü greifen.
+  try {
+    window.parent.document.addEventListener("contextmenu", pdfKontextmenuAbfangen, true);
+    parentLog("Kontextmenü-Interceptor aktiv");
+  } catch (e) {
+    parentLog("Kontextmenü-Interceptor konnte nicht installiert werden:", e?.message);
+  }
+
   // Sauber aufräumen, wenn das Plugin entladen wird (Logseq beim Reload/Disable).
   logseq.beforeunload(async () => {
     try {
       window.parent.document.removeEventListener("click", pdfKlickAbfangen, true);
+      window.parent.document.removeEventListener("contextmenu", pdfKontextmenuAbfangen, true);
+      kontextmenuSchliessen();
     } catch (e) {}
   });
 }
@@ -352,4 +558,4 @@ function main() {
 logseq.ready(main).catch(console.error);
 
 // Werden von ViewerGrid.jsx aufgerufen (Schließen-Button, "+ PDF hinzufügen"-Button, Resize-Handle).
-export { viewerSchliessen, pdfAusBlockOeffnen, viewerBreiteSetzen, viewerBreiteLesen, BREITE_MIN, BREITE_MAX };
+export { viewerSchliessen, pdfAusBlockOeffnen, viewerBreiteSetzen, viewerBreiteLesen, imDateiexplorerAnzeigen, BREITE_MIN, BREITE_MAX };
