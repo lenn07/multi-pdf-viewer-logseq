@@ -1,6 +1,13 @@
 import React, { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react'
 import { usePdf } from '../hooks/usePdf'
+import { imDateiexplorerAnzeigen } from '../main'
 import PdfPage from './PdfPage'
+
+// Plattformabhängiger Name des Datei-Managers für die Menü-Beschriftung.
+const istMac =
+  typeof navigator !== 'undefined' &&
+  /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '')
+const EXPLORER_LABEL = istMac ? 'Im Finder anzeigen' : 'Im Explorer anzeigen'
 
 const stile = {
   container: {
@@ -35,6 +42,23 @@ const stile = {
     fontSize: '11px', color: 'var(--ls-secondary-text-color, #888)',
     minWidth: '32px', textAlign: 'center',
   },
+  kontextmenu: {
+    position: 'fixed',
+    zIndex: 9999,
+    minWidth: '180px',
+    padding: '4px',
+    background: 'var(--ls-primary-background-color, #fff)',
+    color: 'var(--ls-primary-text-color, #333)',
+    border: '1px solid var(--ls-border-color, #ccc)',
+    borderRadius: '6px',
+    boxShadow: '0 2px 12px rgba(0, 0, 0, 0.25)',
+    fontSize: '13px',
+  },
+  kontextmenuEintrag: {
+    display: 'flex', alignItems: 'center', gap: '8px',
+    padding: '6px 10px', cursor: 'pointer', borderRadius: '4px',
+    whiteSpace: 'nowrap',
+  },
 }
 
 const ZOOM_STUFEN  = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0]
@@ -53,6 +77,44 @@ function PdfViewer({ url, titel, onClose, onAuslagern, ownerDocument }) {
   // Letzte verarbeitete Zielbreite, um einen echten Größenwechsel vom ersten
   // Erscheinen (0 → X) zu unterscheiden.
   const vorherigeBreiteRef = useRef(0)
+
+  // Kontextmenü (Rechtsklick / Zwei-Finger-Tipp). `null` = geschlossen,
+  // sonst { x, y } in Viewport-Koordinaten des jeweiligen Dokuments.
+  const containerRef = useRef(null)
+  const [kontextmenu, setKontextmenu] = useState(null)
+
+  function onKontextmenu(e) {
+    e.preventDefault()
+    // Verhindert, dass der Dokument-weite contextmenu-Listener (siehe Effekt
+    // unten) das gerade neu gesetzte Menü sofort wieder schließt.
+    e.nativeEvent.stopPropagation()
+    setKontextmenu({ x: e.clientX, y: e.clientY })
+  }
+
+  function explorerOeffnen() {
+    setKontextmenu(null)
+    imDateiexplorerAnzeigen(url)
+  }
+
+  // Menü schließen bei Klick irgendwohin, Scrollen oder Escape. Listener am
+  // richtigen Dokument registrieren — im ausgelagerten Popout-Fenster lebt der
+  // Viewer in einem anderen `document` als dem des Haupt-iframes.
+  useEffect(() => {
+    if (!kontextmenu) return
+    const doc = containerRef.current?.ownerDocument || document
+    const schliessen = () => setKontextmenu(null)
+    const onKeydown = (e) => { if (e.key === 'Escape') schliessen() }
+    doc.addEventListener('click', schliessen)
+    doc.addEventListener('scroll', schliessen, true)
+    doc.addEventListener('keydown', onKeydown)
+    doc.addEventListener('contextmenu', schliessen)
+    return () => {
+      doc.removeEventListener('click', schliessen)
+      doc.removeEventListener('scroll', schliessen, true)
+      doc.removeEventListener('keydown', onKeydown)
+      doc.removeEventListener('contextmenu', schliessen)
+    }
+  }, [kontextmenu])
 
   const { pdfDokument, seitenanzahl, defaultViewport, laden, fehler } = usePdf(url, ownerDocument)
 
@@ -139,7 +201,7 @@ function PdfViewer({ url, titel, onClose, onAuslagern, ownerDocument }) {
   const zielBreite = Math.max(0, kachelBreite * zoom)
 
   return (
-    <div style={stile.container}>
+    <div ref={containerRef} style={stile.container} onContextMenu={onKontextmenu}>
       <div style={stile.kopfzeile}>
         <strong style={stile.titel} title={titel}>{titel}</strong>
         <span style={stile.seitenInfo}>{aktuelleSeite}/{seitenanzahl}</span>
@@ -174,6 +236,23 @@ function PdfViewer({ url, titel, onClose, onAuslagern, ownerDocument }) {
         <span style={stile.zoomAnzeige}>{Math.round(zoom * 100)}%</span>
         <button onClick={zoomErhoehen} disabled={zoom >= ZOOM_STUFEN[ZOOM_STUFEN.length - 1]} title="Vergrößern">+</button>
       </div>
+
+      {kontextmenu && (
+        <div
+          style={{ ...stile.kontextmenu, left: kontextmenu.x, top: kontextmenu.y }}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <div
+            style={stile.kontextmenuEintrag}
+            onClick={explorerOeffnen}
+            onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--ls-secondary-background-color, #eee)')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+          >
+            <span>📂</span>
+            <span>{EXPLORER_LABEL}</span>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
