@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.0](https://github.com/lenn07/multi-pdf-viewer-logseq/compare/v1.4.0...v1.5.0) (2026-06-23)
+
+
+### Features
+
+* open pdf in explorer ([#8](https://github.com/lenn07/multi-pdf-viewer-logseq/issues/8)) ([a053208](https://github.com/lenn07/multi-pdf-viewer-logseq/commit/a05320819c9e30c9a7608eacb431553f52f41ed5))
+
 ## [1.4.0](https://github.com/lenn07/multi-pdf-viewer-logseq/compare/v1.3.1...v1.4.0) (2026-06-21)
 
 
