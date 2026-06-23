@@ -8,10 +8,10 @@ import ViewerGrid from "./components/ViewerGrid";
 import { dateipfadAusUrl, pdfDateinameAusText } from "./dateipfad";
 
 // Aktuelle Breite des Viewers in Prozent der Bildschirmbreite.
-// Grenzen: 20% (fast alles für Logseq) bis 90% (fast alles für PDFs).
+// Grenzen: 20% (fast alles für Logseq) bis 100% (kompletter Bildschirm für PDFs).
 let viewerBreiteProzent = 40;
 const BREITE_MIN = 20;
-const BREITE_MAX = 90;
+const BREITE_MAX = 100;
 const SPEICHER_SCHLUESSEL = "multiPdfViewer.breiteProzent";
 
 // Setzt die Viewer-Breite. Passt drei Dinge gleichzeitig an:
