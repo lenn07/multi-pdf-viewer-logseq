@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.0](https://github.com/lenn07/multi-pdf-viewer-logseq/compare/v1.5.0...v1.6.0) (2026-06-23)
+
+
+### Features
+
+* fullscreen ([#11](https://github.com/lenn07/multi-pdf-viewer-logseq/issues/11)) ([10a7dff](https://github.com/lenn07/multi-pdf-viewer-logseq/commit/10a7dff1fed63aa3364ac015362ed9c689ebdd1a))
+
 ## [1.5.0](https://github.com/lenn07/multi-pdf-viewer-logseq/compare/v1.4.0...v1.5.0) (2026-06-23)
 
 
