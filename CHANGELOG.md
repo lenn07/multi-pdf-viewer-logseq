@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.0](https://github.com/lenn07/multi-pdf-viewer-logseq/compare/v1.6.0...v1.7.0) (2026-06-28)
+
+
+### Features
+
+* metainfos ([#14](https://github.com/lenn07/multi-pdf-viewer-logseq/issues/14)) ([ea1c417](https://github.com/lenn07/multi-pdf-viewer-logseq/commit/ea1c417ecf5828f12531bfcfcfce48e52c9888e3))
+
 ## [1.6.0](https://github.com/lenn07/multi-pdf-viewer-logseq/compare/v1.5.0...v1.6.0) (2026-06-23)
 
 
