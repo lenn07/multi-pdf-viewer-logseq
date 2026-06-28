@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { getPdfjsLib } from '../hooks/usePdf'
+import { getPdfjsLib, destZuSeite } from '../hooks/usePdf'
+import { externenLinkOeffnen } from '../externerLink'
 
 const RENDER_SCALE = 1.5
 
@@ -35,12 +36,16 @@ function PdfPage({
   zielBreite,
   defaultViewport,
   scrollContainer,
+  onZuSeite,
 }) {
   const wrapperRef    = useRef(null)
   const canvasRef     = useRef(null)
   const textLayerRef  = useRef(null)
   const [sichtbar,  setSichtbar]  = useState(false)
   const [gerendert, setGerendert] = useState(false)
+  // Klickbare Link-Annotationen dieser Seite, bereits in Pixel-Positionen
+  // (left/top/width/height) für die aktuelle Anzeigegröße umgerechnet.
+  const [links, setLinks] = useState([])
 
   const seitenHoehe =
     defaultViewport && zielBreite > 0
@@ -117,6 +122,56 @@ function PdfPage({
     return () => { abgebrochen = true }
   }, [sichtbar, pdfDokument, seitennummer, gerendert, zielBreite])
 
+  // Link-Annotationen laden und in Pixel-Positionen für die aktuelle
+  // Anzeigegröße umrechnen. Nur echte Links (interne Sprungziele + externe
+  // URLs) — andere Annotationstypen (Highlights, Kommentare) ignorieren wir.
+  useEffect(() => {
+    if (!sichtbar || !pdfDokument || zielBreite <= 0) {
+      setLinks([])
+      return
+    }
+    let abgebrochen = false
+    ;(async () => {
+      try {
+        const seite = await pdfDokument.getPage(seitennummer)
+        if (abgebrochen) return
+        const vp1 = seite.getViewport({ scale: 1 })
+        const vp = seite.getViewport({ scale: zielBreite / vp1.width })
+        const annotationen = await seite.getAnnotations()
+        if (abgebrochen) return
+        const linkListe = annotationen
+          .filter((a) => a.subtype === 'Link' && (a.url || a.dest))
+          .map((a) => {
+            const r = vp.convertToViewportRectangle(a.rect)
+            return {
+              left: Math.min(r[0], r[2]),
+              top: Math.min(r[1], r[3]),
+              width: Math.abs(r[2] - r[0]),
+              height: Math.abs(r[3] - r[1]),
+              url: a.url || null,
+              dest: a.dest || null,
+            }
+          })
+        setLinks(linkListe)
+      } catch (err) {
+        if (!abgebrochen)
+          console.error('[MultiPdfViewer] Annotationen Fehler S.' + seitennummer, err)
+      }
+    })()
+    return () => { abgebrochen = true }
+  }, [sichtbar, pdfDokument, seitennummer, zielBreite])
+
+  function linkKlick(e, link) {
+    e.preventDefault()
+    if (link.url) {
+      externenLinkOeffnen(link.url)
+    } else if (link.dest) {
+      destZuSeite(pdfDokument, link.dest).then((seite) => {
+        if (seite && onZuSeite) onZuSeite(seite)
+      })
+    }
+  }
+
   return (
     <div
       ref={wrapperRef}
@@ -143,6 +198,26 @@ function PdfPage({
               : 1,
         }}
       />
+
+      {links.length > 0 && (
+        <div className="pdf-annotation-layer">
+          {links.map((link, i) => (
+            <a
+              key={i}
+              className="pdf-annotation-link"
+              href={link.url || '#'}
+              style={{
+                left:   link.left + 'px',
+                top:    link.top + 'px',
+                width:  link.width + 'px',
+                height: link.height + 'px',
+              }}
+              title={link.url || 'Im Dokument springen'}
+              onClick={(e) => linkKlick(e, link)}
+            />
+          ))}
+        </div>
+      )}
 
       {!gerendert && <div style={stile.platzhalter}>Seite {seitennummer}</div>}
     </div>

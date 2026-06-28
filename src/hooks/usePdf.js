@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { destZuSeite, outlineLaden } from '../pdfMeta'
 
 // Legacy-Build: kompatibel mit älterem Chromium in Logseqs Electron.
 // Vermeidet den Fehler "getOrInsertComputed is not a function".
@@ -23,12 +24,14 @@ async function getPdfjsLib() {
 //   - pdfDokument: das geladene PDF.js-Document (oder null)
 //   - seitenanzahl: Anzahl Seiten
 //   - defaultViewport: { width, height } der ersten Seite bei scale=1 — für Platzhalter-Höhen
+//   - outline: aufgelöstes Inhaltsverzeichnis (siehe outlineLaden) — leer wenn keins vorhanden
 //   - laden: true während das PDF geladen wird
 //   - fehler: Fehlermeldung oder null
 export function usePdf(url, ownerDocument) {
   const [pdfDokument, setPdfDokument] = useState(null)
   const [seitenanzahl, setSeitenanzahl] = useState(0)
   const [defaultViewport, setDefaultViewport] = useState(null)
+  const [outline, setOutline] = useState([])
   const [laden, setLaden] = useState(false)
   const [fehler, setFehler] = useState(null)
 
@@ -39,6 +42,7 @@ export function usePdf(url, ownerDocument) {
     setFehler(null)
     setPdfDokument(null)
     setDefaultViewport(null)
+    setOutline([])
     setSeitenanzahl(0)
 
     let ladeAufgabe = null
@@ -60,6 +64,8 @@ export function usePdf(url, ownerDocument) {
         setSeitenanzahl(doc.numPages)
         setPdfDokument(doc)
         setLaden(false)
+        // Outline nachladen — nicht blockierend, der Viewer ist schon nutzbar.
+        outlineLaden(doc).then((o) => { if (!abgebrochen) setOutline(o) })
       })
       .catch((err) => {
         if (!abgebrochen && err.name !== 'AbortException') {
@@ -74,7 +80,7 @@ export function usePdf(url, ownerDocument) {
     }
   }, [url])
 
-  return { pdfDokument, seitenanzahl, defaultViewport, laden, fehler }
+  return { pdfDokument, seitenanzahl, defaultViewport, outline, laden, fehler }
 }
 
-export { getPdfjsLib }
+export { getPdfjsLib, destZuSeite }

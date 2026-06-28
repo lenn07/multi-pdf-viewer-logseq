@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react'
 import { usePdf } from '../hooks/usePdf'
 import { imDateiexplorerAnzeigen } from '../main'
+import { externenLinkOeffnen } from '../externerLink'
 import PdfPage from './PdfPage'
 
 // Plattformabhängiger Name des Datei-Managers für die Menü-Beschriftung.
@@ -16,6 +17,36 @@ const stile = {
     borderRadius: '4px',
     backgroundColor: 'var(--ls-primary-background-color, #fff)',
     width: '100%', height: '100%', minHeight: 0, minWidth: 0, overflow: 'hidden',
+    position: 'relative',
+  },
+  kopfBtn: {
+    padding: '0 4px', cursor: 'pointer', border: '1px solid transparent',
+    background: 'transparent', color: 'var(--ls-secondary-text-color, #888)',
+    fontSize: '13px', lineHeight: 1, flexShrink: 0,
+  },
+  kopfBtnAktiv: {
+    color: 'var(--ls-primary-text-color, #333)',
+    background: 'var(--ls-secondary-background-color, #eee)',
+    borderColor: 'var(--ls-border-color, #ccc)', borderRadius: '3px',
+  },
+  // Outline-Panel: überlagert links den Scrollbereich, klappbar.
+  tocPanel: {
+    position: 'absolute', left: 0, top: 0, bottom: 0,
+    width: '220px', maxWidth: '70%', zIndex: 5,
+    background: 'var(--ls-primary-background-color, #fff)',
+    borderRight: '1px solid var(--ls-border-color, #ccc)',
+    boxShadow: '2px 0 8px rgba(0, 0, 0, 0.12)',
+    overflow: 'auto', padding: '6px 4px', fontSize: '12px',
+  },
+  tocTitel: {
+    fontSize: '11px', fontWeight: 'bold', padding: '2px 6px 6px',
+    color: 'var(--ls-secondary-text-color, #888)',
+    textTransform: 'uppercase', letterSpacing: '0.04em',
+  },
+  tocEintrag: {
+    padding: '3px 6px', cursor: 'pointer', borderRadius: '3px',
+    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+    color: 'var(--ls-primary-text-color, #333)',
   },
   kopfzeile: {
     display: 'flex', alignItems: 'center', padding: '2px 6px',
@@ -29,8 +60,11 @@ const stile = {
     background: 'transparent', color: 'var(--ls-secondary-text-color, #888)',
     fontSize: '14px', lineHeight: 1, flexShrink: 0,
   },
+  inhalt: {
+    flex: 1, minHeight: 0, minWidth: 0, position: 'relative', display: 'flex',
+  },
   scrollBereich: {
-    overflow: 'auto', padding: '8px 0', flex: 1, minHeight: 0,
+    overflow: 'auto', padding: '8px 0', flex: 1, minHeight: 0, minWidth: 0,
     backgroundColor: 'var(--ls-tertiary-background-color, #ececec)',
   },
   navigation: {
@@ -64,7 +98,40 @@ const stile = {
 const ZOOM_STUFEN  = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0]
 const ZOOM_DEFAULT = 1.0
 
+// Rekursive Darstellung des PDF-Inhaltsverzeichnisses. Einträge mit Seitenziel
+// springen beim Klick dorthin; Einträge mit externer URL öffnen diese; Einträge
+// ohne beides (reine Gruppenüberschriften) werden gedämpft dargestellt.
+function OutlineBaum({ items, onSprung, tiefe = 0 }) {
+  return (
+    <ul style={{ listStyle: 'none', margin: 0, paddingLeft: tiefe === 0 ? 0 : 10 }}>
+      {items.map((item, i) => {
+        const klickbar = item.seite != null || item.url
+        return (
+          <li key={i}>
+            <div
+              style={{ ...stile.tocEintrag, opacity: klickbar ? 1 : 0.6, cursor: klickbar ? 'pointer' : 'default' }}
+              title={item.titel}
+              onClick={() => {
+                if (item.seite != null) onSprung(item.seite)
+                else if (item.url) externenLinkOeffnen(item.url)
+              }}
+              onMouseEnter={(e) => { if (klickbar) e.currentTarget.style.background = 'var(--ls-secondary-background-color, #eee)' }}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+            >
+              {item.titel || '(ohne Titel)'}
+            </div>
+            {item.kinder?.length > 0 && (
+              <OutlineBaum items={item.kinder} onSprung={onSprung} tiefe={tiefe + 1} />
+            )}
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
 function PdfViewer({ url, titel, onClose, onAuslagern, ownerDocument }) {
+  const [tocOffen, setTocOffen] = useState(false)
   const [zoom,           setZoom]           = useState(ZOOM_DEFAULT)
   const [aktuelleSeite,  setAktuelleSeite]  = useState(1)
   const [kachelBreite,   setKachelBreite]   = useState(0)
@@ -116,7 +183,8 @@ function PdfViewer({ url, titel, onClose, onAuslagern, ownerDocument }) {
     }
   }, [kontextmenu])
 
-  const { pdfDokument, seitenanzahl, defaultViewport, laden, fehler } = usePdf(url, ownerDocument)
+  const { pdfDokument, seitenanzahl, defaultViewport, outline, laden, fehler } = usePdf(url, ownerDocument)
+  const hatOutline = outline && outline.length > 0
 
   useEffect(() => {
     if (!scroller) return
@@ -203,6 +271,15 @@ function PdfViewer({ url, titel, onClose, onAuslagern, ownerDocument }) {
   return (
     <div ref={containerRef} style={stile.container} onContextMenu={onKontextmenu}>
       <div style={stile.kopfzeile}>
+        {hatOutline && (
+          <button
+            style={{ ...stile.kopfBtn, ...(tocOffen ? stile.kopfBtnAktiv : {}) }}
+            onClick={() => setTocOffen((o) => !o)}
+            title="Inhaltsverzeichnis"
+          >
+            ☰
+          </button>
+        )}
         <strong style={stile.titel} title={titel}>{titel}</strong>
         <span style={stile.seitenInfo}>{aktuelleSeite}/{seitenanzahl}</span>
         {onAuslagern && (
@@ -213,18 +290,28 @@ function PdfViewer({ url, titel, onClose, onAuslagern, ownerDocument }) {
         )}
       </div>
 
-      <div ref={setScrollerRef} style={stile.scrollBereich}>
-        {pdfDokument && scroller && zielBreite > 0 &&
-          Array.from({ length: seitenanzahl }, (_, i) => (
-            <PdfPage
-              key={i + 1}
-              pdfDokument={pdfDokument}
-              seitennummer={i + 1}
-              zielBreite={zielBreite}
-              defaultViewport={defaultViewport}
-              scrollContainer={scroller}
-            />
-          ))}
+      <div style={stile.inhalt}>
+        <div ref={setScrollerRef} style={stile.scrollBereich}>
+          {pdfDokument && scroller && zielBreite > 0 &&
+            Array.from({ length: seitenanzahl }, (_, i) => (
+              <PdfPage
+                key={i + 1}
+                pdfDokument={pdfDokument}
+                seitennummer={i + 1}
+                zielBreite={zielBreite}
+                defaultViewport={defaultViewport}
+                scrollContainer={scroller}
+                onZuSeite={zuSeite}
+              />
+            ))}
+        </div>
+
+        {tocOffen && hatOutline && (
+          <div style={stile.tocPanel}>
+            <div style={stile.tocTitel}>Inhalt</div>
+            <OutlineBaum items={outline} onSprung={(s) => zuSeite(s)} />
+          </div>
+        )}
       </div>
 
       <div style={stile.navigation}>

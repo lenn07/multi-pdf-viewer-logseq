@@ -142,3 +142,26 @@ button:disabled {
 .pdf-text-layer br::selection {
   background: transparent;
 }
+
+/* Link-Annotationen einer PDF-Seite. Der Container liegt über Canvas und
+   Text-Layer, fängt selbst aber keine Maus-Events (pointer-events: none) —
+   nur die einzelnen Link-Flächen sind klickbar. So bleibt die Textselektion
+   überall außer auf den Links erhalten. */
+.pdf-annotation-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+.pdf-annotation-link {
+  position: absolute;
+  pointer-events: auto;
+  cursor: pointer;
+  display: block;
+  border-radius: 2px;
+  background: transparent;
+  transition: background 0.1s ease;
+}
+.pdf-annotation-link:hover {
+  background: rgba(0, 100, 255, 0.18);
+}
